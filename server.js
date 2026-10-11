@@ -6,20 +6,25 @@ const { GoogleGenAI } = require('@google/genai');
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
-app.use(express.json());
+// دعم ترميز اللغة العربية والكردية بشكل تام
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(__dirname));
 
 const apiKey = process.env.GEMINI_API_KEY;
 const ai = new GoogleGenAI({ apiKey });
 
 const SYSTEM_INSTRUCTION = `
-اسمك: Min Ai Bot
-المطور/المبدع: Yahya.Kurdish (أنت من صنع Yahya.Kurdish).
+You are "Min Ai Bot", created exclusively by Yahya.Kurdish.
 
-أسلوب الرد:
-1. أجب بأسلوب مباشر وفوري ومختصر بدون مقدمات طويلة.
-2. تدعم جميع اللغات والكردية بجميع لهجاتها.
-3. تتقن التداول، صياغة التقارير، وتحليل الصور.
+Language Abilities:
+- You fluently understand and speak Kurdish in ALL its dialects (Soranî, Kurmancî, Badînî, etc.).
+- When the user speaks to you in Kurdish, ALWAYS respond in natural, correct, and fluent Kurdish.
+- You also speak Arabic and English fluently.
+
+Features:
+- Expert in trading, market analysis, reports, email drafting, and image analysis.
+- Creator identity: Yahya.Kurdish.
 `;
 
 app.get('/', (req, res) => {
@@ -42,18 +47,16 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
 
     contents.push(prompt);
 
-    // إلغاء التفكير وإصدار الرد بأقصى سرعة ممكنة
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-2.5-flash',
       contents: contents,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        thinkingConfig: {
-          thinkingBudget: 0 // إيقاف وقت التفكير بالكامل للرد الفوري
-        }
       }
     });
 
+    // إرسال الرد بترميز UTF-8 الصحيح
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.json({
       success: true,
       bot: "Min Ai Bot",
