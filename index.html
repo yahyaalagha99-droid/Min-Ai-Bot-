@@ -3,14 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Min Ai Bot - Yahya.Kurdish</title>
+  <title>Min Ai Bot</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     body { background-color: #0f172a; color: #f8fafc; display: flex; flex-direction: column; height: 100vh; }
     
     header { background: #1e293b; padding: 15px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
     header h1 { font-size: 1.2rem; color: #38bdf8; }
-    header span { font-size: 0.85rem; color: #94a3b8; }
 
     #chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
     
@@ -41,13 +40,12 @@
 
   <header>
     <h1>🤖 Min Ai Bot</h1>
-    <span>تطوير: <b>Yahya.Kurdish</b></span>
   </header>
 
   <div id="chat-container">
     <div class="message bot">
       <div class="bot-author">Min Ai Bot</div>
-      مرحباً بك! أنا **Min Ai Bot** المطور بواسطة **Yahya.Kurdish**. 
+      مرحباً بك! أنا **Min Ai Bot**. 
       جاهز لمساعدتك في التداول، تحليل الصور، الصوت، التقارير والإيميلات، والتحدث بكل اللغات والكردية بكافة لهجاتها!
     </div>
   </div>
@@ -69,7 +67,6 @@
   </div>
 
   <script>
-    // رابط سيرفرك المربوط حصرياً
     const RENDER_SERVER_URL = "https://min-ai-bot-8a21.onrender.com/api/chat";
 
     let selectedFile = null;
@@ -169,7 +166,7 @@
       if (sender === 'bot') {
         const authorDiv = document.createElement('div');
         authorDiv.className = 'bot-author';
-        authorDiv.innerText = 'Min Ai Bot (Yahya.Kurdish)';
+        authorDiv.innerText = 'Min Ai Bot';
         msgDiv.appendChild(authorDiv);
       }
 
