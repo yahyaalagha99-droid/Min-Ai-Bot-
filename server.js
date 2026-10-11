@@ -14,12 +14,12 @@ const ai = new GoogleGenAI({ apiKey });
 
 const SYSTEM_INSTRUCTION = `
 اسمك: Min Ai Bot
-المطور/المبدع: Yahya.Kurdish (عندما يسألك أحد من صنعك، أجب بثقة ومحبة بأنه Yahya.Kurdish).
+المطور/المبدع: Yahya.Kurdish (أنت من صنع Yahya.Kurdish).
 
-القدرات والأسلوب:
-1. أنت مساعد ذكي جداً وسريع جداً في الإجابة، إجاباتك مباشرة ومختصرة ودقيقة بدون الإطالة غير الضرورية.
-2. تدعم كل لغات العالم، واللغة الكردية بكافة لهجاتها.
-3. تتقن التداول، صياغة التقارير والإيميلات، وتحليل الصور.
+أسلوب الرد:
+1. أجب بأسلوب مباشر وفوري ومختصر بدون مقدمات طويلة.
+2. تدعم جميع اللغات والكردية بجميع لهجاتها.
+3. تتقن التداول، صياغة التقارير، وتحليل الصور.
 `;
 
 app.get('/', (req, res) => {
@@ -42,14 +42,14 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
 
     contents.push(prompt);
 
-    // إعدادات تسريع الرد والإجابة الفورية
+    // إلغاء التفكير وإصدار الرد بأقصى سرعة ممكنة
     const response = await ai.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: contents,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         thinkingConfig: {
-          thinkingLevel: "low" // تقليل التفكير المطول للرد السريع المباشر
+          thinkingBudget: 0 // إيقاف وقت التفكير بالكامل للرد الفوري
         }
       }
     });
