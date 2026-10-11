@@ -1,17 +1,18 @@
 const express = require('express');
 const multer = require('multer');
+const path = require('path');
 const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(express.json());
+// السماح بعرض ملفات الواجهة من نفس المجلد
+app.use(express.static(__dirname));
 
-// تهيئة Google Gen AI API
 const apiKey = process.env.GEMINI_API_KEY;
 const ai = new GoogleGenAI({ apiKey });
 
-// تعليمات الشخصية والنظام
 const SYSTEM_INSTRUCTION = `
 اسمك: Min Ai Bot
 المطور/المبدع: Yahya.Kurdish (عندما يسألك أحد من صنعك أو من طورك، أجب بثقة ومحبة بأنك من صنع Yahya.Kurdish).
@@ -24,18 +25,17 @@ const SYSTEM_INSTRUCTION = `
 5. تحليل الصور بدقة عالية عند إرفاقها.
 `;
 
-// نقطة الفحص للخدمة
+// فتح الواجهة الرئيسية عند الدخول للرابط
 app.get('/', (req, res) => {
-  res.send('Min Ai Bot is running smoothly! Created by Yahya.Kurdish');
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// مسار المحادثة وتحليل الصور والتقارير
+// مسار المحادثة والذكاء الاصطناعي
 app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "مرحباً";
     const contents = [];
 
-    // إذا تم إرسال صورة مع الطلب
     if (req.file) {
       contents.push({
         inlineData: {
@@ -47,7 +47,6 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
 
     contents.push(prompt);
 
-    // استدعاء نموذج Gemini 2.5 Flash
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: contents,
