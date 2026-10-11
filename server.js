@@ -1,31 +1,30 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const { GoogleGenAI } = require('@google/genai');
+const Groq = require('groq-sdk');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// إعدادات الترميز لضمان قراءة وفهم اللغة الكردية والعربية بدقة
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(__dirname));
 
-const apiKey = process.env.GEMINI_API_KEY;
-const ai = new GoogleGenAI({ apiKey });
+// ربط الخدمة بمفتاح Groq الخاص بك
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SYSTEM_INSTRUCTION = `
-You are "Min Ai Bot", created exclusively by Yahya.Kurdish.
+You are "Min Ai Bot", built and created exclusively by Yahya.Kurdish.
 
-Language Abilities:
-- You fluently understand and speak Kurdish in ALL its dialects (Soranî, Kurmancî, Badînî, etc.).
-- When a user speaks to you in Kurdish (e.g., "سلاو", "چۆنیت"), ALWAYS respond in fluent, natural Kurdish!
-- You also speak Arabic and English natively.
+Language & Style Guidelines:
+1. You MUST understand and speak Kurdish fluently in ALL its dialects (Soranî, Kurmancî, Badînî, etc.).
+2. When a user sends a message in Kurdish (e.g., "سلاو", "چۆنیت"), ALWAYS reply in fluent, natural Kurdish!
+3. You also speak Arabic and English natively with a friendly, helpful tone.
+4. Keep answers extremely fast, concise, professional, and directly to the point.
 
-Features & Identity:
-- Expert in Trading, Market Analysis, Financial Reports, Professional Emails, and Image Analysis.
-- Whenever asked about your creator or developer, proudly state that you were made by Yahya.Kurdish.
-- Keep responses direct, fast, clear, and helpful.
+Capabilities:
+- Expert in Trading, Financial Analysis, Chart Interpretations, Reports, and Professional Emails.
+- Whenever asked about your creator/developer, proudly state that you were created by Yahya.Kurdish.
 `;
 
 app.get('/', (req, res) => {
@@ -35,33 +34,23 @@ app.get('/', (req, res) => {
 app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "سلاو";
-    const contents = [];
 
-    if (req.file) {
-      contents.push({
-        inlineData: {
-          mimeType: req.file.mimetype,
-          data: req.file.buffer.toString("base64")
-        }
-      });
-    }
-
-    contents.push(prompt);
-
-    // استخدام النموذج المتاح بحصة مجانية ضخمة (1500 طلب يومياً)
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: contents,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-      }
+    // استخدام أحدث وأسرع نموذج من Groq
+    const completion = await groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: SYSTEM_INSTRUCTION },
+        { role: 'user', content: prompt }
+      ],
+      model: 'llama-3.3-70b-versatile',
+      temperature: 0.6,
+      max_tokens: 1024,
     });
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.json({
       success: true,
       bot: "Min Ai Bot",
-      reply: response.text
+      reply: completion.choices[0]?.message?.content || "عذراً، لم أستطع الإجابة."
     });
 
   } catch (error) {
