@@ -10,7 +10,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(__dirname));
 
-// يقرأ المفتاح بأمان وسرية من إعدادات البيئة (Environment)
+// قراءة المفتاح بأمان من متغيرات البيئة
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SYSTEM_INSTRUCTION = `
@@ -35,12 +35,13 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "سلاو";
 
+    // النموذج الحديث والفعال حالياً على Groq
     const completion = await groq.chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_INSTRUCTION },
         { role: 'user', content: prompt }
       ],
-      model: 'llama3-8b-8192',
+      model: 'llama-3.1-8b-instant',
       temperature: 0.6,
       max_tokens: 1024,
     });
