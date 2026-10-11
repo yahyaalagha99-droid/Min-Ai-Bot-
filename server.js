@@ -7,7 +7,6 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(express.json());
-// السماح بعرض ملفات الواجهة من نفس المجلد
 app.use(express.static(__dirname));
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -25,12 +24,10 @@ const SYSTEM_INSTRUCTION = `
 5. تحليل الصور بدقة عالية عند إرفاقها.
 `;
 
-// فتح الواجهة الرئيسية عند الدخول للرابط
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// مسار المحادثة والذكاء الاصطناعي
 app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "مرحباً";
@@ -47,8 +44,9 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
 
     contents.push(prompt);
 
+    // استخدام النموذج المحدث والمطلوب من Google
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents: contents,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
