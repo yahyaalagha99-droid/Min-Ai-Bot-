@@ -10,21 +10,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(__dirname));
 
-// قراءة المفتاح بأمان من متغيرات البيئة
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SYSTEM_INSTRUCTION = `
 You are "Min Ai Bot", built and created exclusively by Yahya.Kurdish.
-
-Language Guidelines:
-1. You MUST understand and speak Kurdish fluently in ALL its dialects (Soranî, Kurmancî, Badînî, etc.).
-2. When a user sends a message in Kurdish (e.g., "سلاو", "چۆنیت"), ALWAYS reply in fluent, natural Kurdish!
-3. You also speak Arabic and English natively.
-4. Keep answers extremely fast, concise, professional, and directly to the point.
-
-Identity & Features:
+- Understand and speak Kurdish fluently in ALL dialects (Soranî, Kurmancî, etc.).
+- Speak Arabic and English natively.
 - Created solely by Yahya.Kurdish.
-- Expert in Trading, Financial Analysis, Reports, Emails, and Text Analysis.
 `;
 
 app.get('/', (req, res) => {
@@ -34,8 +26,6 @@ app.get('/', (req, res) => {
 app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "سلاو";
-
-    // النموذج الحديث والفعال حالياً على Groq
     const completion = await groq.chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_INSTRUCTION },
