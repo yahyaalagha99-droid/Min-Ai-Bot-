@@ -1,67 +1,166 @@
-const express = require('express');
-const multer = require('multer');
-const path = require('path');
-const Groq = require('groq-sdk');
-
-const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
-
-app.use(express.json());
-
-// توفير الملفات الثابتة من مجلدات المشروع
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.static(path.join(__dirname, 'Frontend')));
-
-// جلب مفتاح Groq تلقائياً من Environment Variables
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-// تعليمات الشخصية للبوت
-const SYSTEM_INSTRUCTION = `
-اسمك: My Ai Bot
-المطور: Yahya.Kurdish
-أنت مساعد ذكي ولطيف ومستعد للمساعدة في كل الأوقات.
-`;
-
-// عند فتح الرابط الرئيسي يتم عرض واجهة HTML
-app.get('/', (req, res) => {
-  const htmlPath = path.join(__dirname, 'index.html');
-  res.sendFile(htmlPath, (err) => {
-    if (err) {
-      res.sendFile(path.join(__dirname, 'Frontend', 'index.html'));
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Ai Bot</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
-  });
-});
+    body {
+      background-color: #0f0c20;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background-color: #161233;
+      padding: 15px 20px;
+      text-align: center;
+      border-bottom: 1px solid #2a2456;
+    }
+    header h1 {
+      font-size: 1.4rem;
+      color: #8b5cf6;
+    }
+    header p {
+      font-size: 0.8rem;
+      color: #aaa;
+      margin-top: 4px;
+    }
+    #chat-container {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .message {
+      max-width: 80%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      line-height: 1.5;
+      font-size: 0.95rem;
+      word-wrap: break-word;
+    }
+    .user-message {
+      align-self: flex-end;
+      background-color: #6366f1;
+      color: white;
+      border-bottom-right-radius: 2px;
+    }
+    .bot-message {
+      align-self: flex-start;
+      background-color: #1e1b4b;
+      color: #e0e0e0;
+      border-bottom-left-radius: 2px;
+      border: 1px solid #312e81;
+    }
+    #input-form {
+      display: flex;
+      padding: 12px;
+      background-color: #161233;
+      border-top: 1px solid #2a2456;
+      gap: 8px;
+      align-items: center;
+    }
+    #prompt-input {
+      flex: 1;
+      padding: 12px;
+      border: 1px solid #312e81;
+      border-radius: 8px;
+      background-color: #0f0c20;
+      color: white;
+      outline: none;
+    }
+    #prompt-input:focus {
+      border-color: #6366f1;
+    }
+    button[type="submit"] {
+      background-color: #6366f1;
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button[type="submit"]:hover {
+      background-color: #4f46e5;
+    }
+  </style>
+</head>
+<body>
 
-// API استقبال المحادثة
-app.post('/api/chat', upload.single('image'), async (req, res) => {
-  try {
-    const prompt = req.body.prompt || "مرحباً";
+  <header>
+    <h1>My Ai Bot 🤖</h1>
+    <p>Developed by Yahya.Kurdish</p>
+  </header>
 
-    // استخدام نموذج llama-3.3-70b-versatile السريع والأفضل للغة العربية
-    const chatCompletion = await groq.chat.completions.create({
-      messages: [
-        { role: 'system', content: SYSTEM_INSTRUCTION },
-        { role: 'user', content: prompt }
-      ],
-      model: 'llama-3.3-70b-versatile',
+  <div id="chat-container">
+    <div class="message bot-message">
+      أهلاً بك! أنا My Ai Bot. كيف يمكنني مساعدتك اليوم؟
+    </div>
+  </div>
+
+  <form id="input-form">
+    <input type="text" id="prompt-input" placeholder="اكتب رسالتك هنا..." required autocomplete="off">
+    <button type="submit">إرسال ↑</button>
+  </form>
+
+  <script>
+    const form = document.getElementById('input-form');
+    const promptInput = document.getElementById('prompt-input');
+    const chatContainer = document.getElementById('chat-container');
+
+    function appendMessage(text, sender) {
+      const msgDiv = document.createElement('div');
+      msgDiv.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
+      msgDiv.textContent = text;
+      chatContainer.appendChild(msgDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const prompt = promptInput.value.trim();
+      if (!prompt) return;
+
+      appendMessage(prompt, 'user');
+      promptInput.value = '';
+
+      const loadingDiv = document.createElement('div');
+      loadingDiv.classList.add('message', 'bot-message');
+      loadingDiv.textContent = 'جاري التفكير...';
+      chatContainer.appendChild(loadingDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: prompt })
+        });
+        const data = await res.json();
+
+        chatContainer.removeChild(loadingDiv);
+
+        if (data.success) {
+          appendMessage(data.reply, 'bot');
+        } else {
+          appendMessage('حدث خطأ: ' + (data.error || 'تعذّر الحصول على رد.'), 'bot');
+        }
+      } catch (err) {
+        chatContainer.removeChild(loadingDiv);
+        appendMessage('تعذر الاتصال بالسيرفر.', 'bot');
+      }
     });
-
-    const reply = chatCompletion.choices[0]?.message?.content || "لم يتم استلام رد.";
-
-    res.json({
-      success: true,
-      bot: "My Ai Bot",
-      creator: "Yahya.Kurdish",
-      reply: reply
-    });
-
-  } catch (error) {
-    console.error("Server Error:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`My Ai Bot server running on port ${PORT}`);
-});
+  </script>
+</body>
+</html>
