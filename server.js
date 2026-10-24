@@ -8,20 +8,21 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(express.json());
 
-// توفير الملفات الثابتة
+// توفير الملفات الثابتة من مجلدات المشروع
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'Frontend')));
 
 // جلب مفتاح Groq تلقائياً من Environment Variables
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// تعليمات الشخصية
+// تعليمات الشخصية للبوت
 const SYSTEM_INSTRUCTION = `
 اسمك: My Ai Bot
 المطور: Yahya.Kurdish
 أنت مساعد ذكي ولطيف ومستعد للمساعدة في كل الأوقات.
 `;
 
+// عند فتح الرابط الرئيسي يتم عرض واجهة HTML
 app.get('/', (req, res) => {
   const htmlPath = path.join(__dirname, 'index.html');
   res.sendFile(htmlPath, (err) => {
@@ -31,11 +32,12 @@ app.get('/', (req, res) => {
   });
 });
 
+// API استقبال المحادثة
 app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "مرحباً";
 
-    // استخدام نموذج Groq السريع والمجاني (Llama 3.3 70B)
+    // استخدام نموذج llama-3.3-70b-versatile السريع والأفضل للغة العربية
     const chatCompletion = await groq.chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_INSTRUCTION },
@@ -54,7 +56,7 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Server Error:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
