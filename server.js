@@ -1,71 +1,56 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const { GoogleGenAI } = require('@google/genai');
+const Groq = require('groq-sdk');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(express.json());
 
-// توفير الملفات الثابتة (Static files)
+// توفير الملفات الثابتة
 app.use(express.static(path.join(__dirname, 'public')));
-// إذا كان ملف index.html في مجلد اسمه Frontend
 app.use(express.static(path.join(__dirname, 'Frontend')));
 
-// استخدام المفتاح من متغيرات البيئة أو المباشر
-const apiKey = process.env.GEMINI_API_KEY || "ضع_المفتاح_هنا";
-const ai = new GoogleGenAI({ apiKey });
+// جلب مفتاح Groq تلقائياً من Environment Variables
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // تعليمات الشخصية
 const SYSTEM_INSTRUCTION = `
-اسمك: Min Ai Bot
+اسمك: My Ai Bot
 المطور: Yahya.Kurdish
 أنت مساعد ذكي ولطيف ومستعد للمساعدة في كل الأوقات.
 `;
 
-// عند فتح الرابط الرئيسي يتم إرسال واجهة المستخدم index.html
 app.get('/', (req, res) => {
-  // للتحقق أولاً من المجلد الرئيسي أو Frontend
   const htmlPath = path.join(__dirname, 'index.html');
   res.sendFile(htmlPath, (err) => {
     if (err) {
-      // في حال كان الملف داخل مجلد Frontend
       res.sendFile(path.join(__dirname, 'Frontend', 'index.html'));
     }
   });
 });
 
-// API المحادثة
 app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "مرحباً";
-    const contents = [];
 
-    if (req.file) {
-      contents.push({
-        inlineData: {
-          mimeType: req.file.mimetype,
-          data: req.file.buffer.toString("base64")
-        }
-      });
-    }
-
-    contents.push(prompt);
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: contents,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-      }
+    // استخدام نموذج Groq السريع والمجاني (Llama 3.3 70B)
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: SYSTEM_INSTRUCTION },
+        { role: 'user', content: prompt }
+      ],
+      model: 'llama-3.3-70b-versatile',
     });
+
+    const reply = chatCompletion.choices[0]?.message?.content || "لم يتم استلام رد.";
 
     res.json({
       success: true,
-      bot: "Min Ai Bot",
+      bot: "My Ai Bot",
       creator: "Yahya.Kurdish",
-      reply: response.text()
+      reply: reply
     });
 
   } catch (error) {
@@ -76,5 +61,5 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Min Ai Bot server running on port ${PORT}`);
+  console.log(`My Ai Bot server running on port ${PORT}`);
 });
