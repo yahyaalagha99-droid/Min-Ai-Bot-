@@ -1,4 +1,4 @@
-// server.js - السيرفر المحسّن مع نظام احتياطي للصور لضمان عدم حدوث أخطاء
+// server.js - الكود النهائي والداعم للرؤية الحقيقية على الويب وتيليجرام
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -9,14 +9,12 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(express.json());
-
 app.use(express.static(__dirname));
 app.use(express.static(path.join(__dirname, 'Frontend')));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ذاكرة مؤقتة لموقع الويب
 let conversationHistory = [
   { role: 'system', content: SYSTEM_INSTRUCTION }
 ];
@@ -34,54 +32,46 @@ app.get('/', (req, res) => {
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-// API موقع الويب
+// API موقع الويب مع الدعم الحقيقي للرؤية
 app.post('/api/chat', upload.single('file'), async (req, res) => {
   try {
     let prompt = req.body.prompt || "";
-    const clientTime = req.body.clientTime || new Date().toLocaleString();
-    const clientTimeZone = req.body.clientTimeZone || "Unknown";
+    let userContent = prompt;
+    let activeModel = GROQ_MODEL;
 
     if (req.file) {
       const ext = path.extname(req.file.originalname).toLowerCase();
       if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
-        prompt += `\n[ملاحظة: قام المستخدم برفع صورة باسم (${req.file.originalname})]`;
-      } else {
-        const fileContent = req.file.buffer.toString('utf8');
-        const trimmedContent = fileContent.length > 2000 ? fileContent.substring(0, 2000) + "\n[تم اقتصاص باقي الملف...]" : fileContent;
-        prompt += `\n[محتوى الملف المرفق (${req.file.originalname}):\n${trimmedContent}\n]`;
+        const base64Image = req.file.buffer.toString('base64');
+        const imageUrl = `data:${req.file.mimetype || 'image/jpeg'};base64,${base64Image}`;
+        userContent = [
+          { type: "text", text: prompt || "ماذا يوجد في هذه الصورة؟ قم بتحليلها بدقة." },
+          { type: "image_url", image_url: { url: imageUrl } }
+        ];
+        activeModel = "llama-3.2-11b-vision-preview";
       }
-    }
-
-    const timeContext = `[Context -> Local Time: ${clientTime}, TimeZone: ${clientTimeZone}, Year: 2026]`;
-    const fullUserMessage = `${timeContext}\n${prompt}`;
-
-    conversationHistory.push({ role: 'user', content: fullUserMessage });
-
-    if (conversationHistory.length > 8) {
-      const systemPrompt = conversationHistory[0];
-      conversationHistory = [systemPrompt, ...conversationHistory.slice(-6)];
+    } else {
+      userContent = prompt;
     }
 
     const chatCompletion = await groq.chat.completions.create({
-      messages: conversationHistory,
-      model: GROQ_MODEL,
+      messages: [
+        { role: 'system', content: SYSTEM_INSTRUCTION },
+        { role: 'user', content: userContent }
+      ],
+      model: activeModel,
     });
 
     const reply = chatCompletion.choices[0]?.message?.content || "لم يتم استلام رد.";
-    conversationHistory.push({ role: 'assistant', content: reply });
-
     res.json({ success: true, bot: BOT_NAME, creator: DEVELOPER_NAME, reply: reply });
 
   } catch (error) {
-    console.error("Server Error:", error);
-    conversationHistory = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
-    res.status(500).json({ success: false, error: "تم إعادة ضبط الذاكرة مؤقتاً. حاول مجدداً." });
+    console.error("Web Server Vision Error:", error);
+    res.status(500).json({ success: false, error: "حدث خطأ أثناء معالجة الصورة أو الرسالة." });
   }
 });
 
-// ----------------------------------------------------
-// نظام تيليجرام مع معالجة آمنة جداً وفورية للرسائل والصور
-// ----------------------------------------------------
+// نظام تيليجرام مع الجلب الفعلي والصحيح للصور
 const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
 if (telegramToken) {
   let offset = 0;
@@ -98,53 +88,47 @@ if (telegramToken) {
             const chatId = update.message.chat.id;
             
             try {
-              let userMessages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
               let userContent = null;
               let activeModel = GROQ_MODEL;
 
-              // محاولة معالجة الصورة إذا وجدت
+              // إذا أرسل المستخدم صورة في تيليجرام
               if (update.message.photo && update.message.photo.length > 0) {
-                try {
-                  const photos = update.message.photo;
-                  const bestPhoto = photos[photos.length - 1];
-                  const fileId = bestPhoto.file_id;
+                const photos = update.message.photo;
+                const bestPhoto = photos[photos.length - 1];
+                const fileId = bestPhoto.file_id;
 
-                  const fileInfoRes = await fetch(`https://api.telegram.org/bot${telegramToken}/getFile?file_id=${fileId}`);
-                  const fileInfoData = await fileInfoRes.json();
+                const fileInfoRes = await fetch(`https://api.telegram.org/bot${telegramToken}/getFile?file_id=${fileId}`);
+                const fileInfoData = await fileInfoRes.json();
 
-                  if (fileInfoData.ok) {
-                    const filePath = fileInfoData.result.file_path;
-                    const downloadUrl = `https://api.telegram.org/file/bot${telegramToken}/${filePath}`;
-                    
-                    const imgRes = await fetch(downloadUrl);
-                    const arrayBuffer = await imgRes.arrayBuffer();
-                    const base64Image = Buffer.from(arrayBuffer).toString('base64');
-                    const imageUrl = `data:image/jpeg;base64,${base64Image}`;
+                if (fileInfoData.ok) {
+                  const filePath = fileInfoData.result.file_path;
+                  const downloadUrl = `https://api.telegram.org/file/bot${telegramToken}/${filePath}`;
+                  
+                  const imgRes = await fetch(downloadUrl);
+                  const buffer = Buffer.from(await imgRes.arrayBuffer());
+                  const base64Image = buffer.toString('base64');
+                  const imageUrl = `data:image/jpeg;base64,${base64Image}`;
 
-                    const caption = update.message.caption || "ماذا توجد في هذه الصورة؟ قم بتحليلها بدقة واشرحها لي.";
-                    
-                    userContent = [
-                      { type: "text", text: caption },
-                      { type: "image_url", image_url: { url: imageUrl } }
-                    ];
-                    activeModel = "llama-3.2-11b-vision-preview";
-                  }
-                } catch (imgErr) {
-                  console.log("Image fetch skipped, falling back to text:", imgErr.message);
-                  userContent = update.message.caption || "مرحباً، أرسلت لي صورة ولكن تعذر تحميلها مؤقتم, كيف يمكنني مساعدتك؟";
+                  const caption = update.message.caption || "ماذا يوجد في هذه الصورة؟ قم بتحليلها بدقة واشرحها لي.";
+                  
+                  userContent = [
+                    { type: "text", text: caption },
+                    { type: "image_url", image_url: { url: imageUrl } }
+                  ];
+                  activeModel = "llama-3.2-11b-vision-preview";
                 }
               } 
-              
-              // المعالجة النصية أو البديلة
-              if (!userContent && update.message.text) {
+              // إذا كانت رسالة نصية اعتيادية
+              else if (update.message.text) {
                 userContent = update.message.text;
               }
 
               if (userContent) {
-                userMessages.push({ role: 'user', content: userContent });
-
                 const chatCompletion = await groq.chat.completions.create({
-                  messages: userMessages,
+                  messages: [
+                    { role: 'system', content: SYSTEM_INSTRUCTION },
+                    { role: 'user', content: userContent }
+                  ],
                   model: activeModel,
                 });
 
@@ -157,11 +141,11 @@ if (telegramToken) {
                 });
               }
             } catch (innerErr) {
-              console.error("Error processing message:", innerErr);
+              console.error("Telegram Vision Error:", innerErr);
               await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId, text: "أهلاً بك! استلمت رسالتك، جارٍ العمل على الرد بكل ذكاء." })
+                body: JSON.stringify({ chat_id: chatId, text: "عذراً، حدث خطأ أثناء قراءة الصورة. تأكد من حجمها أو حاول مجدداً." })
               });
             }
           }
@@ -171,7 +155,7 @@ if (telegramToken) {
       console.error("Telegram Polling Error:", err.message);
     }
   }, 3000);
-  console.log("🤖 Telegram Bot is active with safe fallback handling!");
+  console.log("🤖 Telegram Vision Bot is fully active!");
 }
 
 const PORT = process.env.PORT || 3000;
