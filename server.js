@@ -1,9 +1,14 @@
-const express = require('express');
-const multer = require('multer');
-const path = require('path');
-const Groq = require('groq-sdk');
-const { SYSTEM_INSTRUCTION, BOT_NAME, DEVELOPER_NAME, GROQ_MODEL } = require('./config');
-const { startTelegramBot } = require('./telegram');
+import express from "express";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
+import Groq from "groq-sdk";
+import { SYSTEM_INSTRUCTION, BOT_NAME, DEVELOPER_NAME, GROQ_MODEL } from "./config.js";
+import { startTelegramBot } from "./telegram.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 }, storage: multer.memoryStorage() });
@@ -24,14 +29,14 @@ app.get('/', (req, res) => {
     path.join(__dirname, 'Frontend', 'index.html')
   ];
   for (const filePath of possiblePaths) {
-    if (require('fs').existsSync(filePath)) {
+    if (fs.existsSync(filePath)) {
       return res.sendFile(filePath);
     }
   }
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-// ---------------------- المسار المتوافق مع واجهة الموقع (/ask/stream) ----------------------
+// المسار المتوافق مع واجهة الموقع (Streaming)
 app.post('/ask/stream', async (req, res) => {
   try {
     let { messages } = req.body;
@@ -40,13 +45,11 @@ app.post('/ask/stream', async (req, res) => {
       messages = [{ role: 'user', content: "مرحباً" }];
     }
 
-    // تجهيز الرسائل مع النظام (System Instruction)
     const formattedMessages = [
       { role: 'system', content: SYSTEM_INSTRUCTION || "You are MAi Bot." },
       ...messages
     ];
 
-    // اختيار النموذج المناسب (افتراضي أو Vision إذا وُجدت صورة في آخر رسالة)
     let activeModel = GROQ_MODEL || "llama-3.1-8b-instant";
     
     const lastMsg = messages[messages.length - 1];
@@ -57,7 +60,6 @@ app.post('/ask/stream', async (req, res) => {
       }
     }
 
-    // إعداد الـ Stream للرد الفوري
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -87,7 +89,7 @@ app.post('/ask/stream', async (req, res) => {
   }
 });
 
-// ---------------------- مسار عام احتياطي (/api/chat) ----------------------
+// المسار الاحتياطي (/api/chat)
 app.post('/api/chat', upload.single('file'), async (req, res) => {
   try {
     let prompt = req.body.prompt || "مرحباً";
