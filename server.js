@@ -35,7 +35,7 @@ app.get('/', (req, res) => {
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-// مسار الـ Streaming المتوافق مع واجهة الموقع
+// مسار الـ Streaming المتوافق مع واجهة الموقع ومعالجة الصور
 app.post('/ask/stream', async (req, res) => {
   try {
     let { messages } = req.body;
@@ -44,20 +44,25 @@ app.post('/ask/stream', async (req, res) => {
       messages = [{ role: 'user', content: "مرحباً" }];
     }
 
+    let activeModel = GROQ_MODEL; // النموذج الأساسي للنصوص
+    
+    // فحص ما إذا كانت الرسالة الأخيرة تحتوي على صورة
+    const lastMsg = messages[messages.length - 1];
+    let hasImage = false;
+
+    if (lastMsg && Array.isArray(lastMsg.content)) {
+      hasImage = lastMsg.content.some(c => c.type === 'image_url');
+    }
+
+    // إذا وُجِدت صورة، نحول الطلب حصرياً إلى نموذج الـ Vision المدعوم للصور
+    if (hasImage) {
+      activeModel = "llama-3.2-11b-vision-preview";
+    }
+
     const formattedMessages = [
       { role: 'system', content: SYSTEM_INSTRUCTION },
       ...messages
     ];
-
-    let activeModel = GROQ_MODEL;
-    
-    const lastMsg = messages[messages.length - 1];
-    if (lastMsg && Array.isArray(lastMsg.content)) {
-      const hasImage = lastMsg.content.some(c => c.type === 'image_url');
-      if (hasImage) {
-        activeModel = "openai/gpt-oss-120b";
-      }
-    }
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -82,7 +87,7 @@ app.post('/ask/stream', async (req, res) => {
   } catch (error) {
     console.error("Stream API Error:", error);
     res.setHeader("Content-Type", "text/event-stream");
-    res.write(`data: ${JSON.stringify({ error: error.message || "حدث خطأ في السيرفر" })}\n\n`);
+    res.write(`data: ${JSON.stringify({ error: error.message || "حدث خطأ في معالجة الطلب" })}\n\n`);
     res.write("data: [DONE]\n\n");
     res.end();
   }
