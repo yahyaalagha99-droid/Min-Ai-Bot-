@@ -18,13 +18,13 @@ app.post("/api/text", async (req, res) => {
     const userText = req.body.text;
 
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-,      method: "POST",
+      method: "POST",
       headers: {
         "Authorization": `Bearer ${API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile", // تم التعديل لنماذج Groq
+        model: "llama-3.3-70b-versatile",
         messages: [
           { role: "system", content: "You are MAi Bot created by Yahya Kurdish." },
           { role: "user", content: userText }
@@ -58,7 +58,7 @@ app.post("/api/image", upload.single("image"), async (req, res) => {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "llama-3.2-90b-vision-preview", // نموذج يدعم الصور في Groq
+        model: "llama-3.2-90b-vision-preview",
         messages: [
           { role: "system", content: "You are MAi Bot created by Yahya Kurdish." },
           {
@@ -97,7 +97,6 @@ app.post("/api/audio", upload.single("audio"), async (req, res) => {
   try {
     const audioPath = req.file.path;
 
-    // استخدام FormData لإرسال الملف بالشكل الصحيح لـ Groq
     const form = new FormData();
     form.append("file", fs.createReadStream(audioPath));
     form.append("model", "whisper-large-v3");
