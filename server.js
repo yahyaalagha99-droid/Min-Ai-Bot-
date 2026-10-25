@@ -2,11 +2,15 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const Groq = require('groq-sdk');
+const fs = require('fs');
 const { SYSTEM_INSTRUCTION, BOT_NAME, DEVELOPER_NAME, GROQ_MODEL } = require('./config');
 const { startTelegramBot } = require('./telegram');
 
 const app = express();
-const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 }, storage: multer.memoryStorage() });
+const upload = multer({
+  limits: { fileSize: 10 * 1024 * 1024 },
+  storage: multer.memoryStorage()
+});
 
 app.use(express.json());
 app.use(express.static(__dirname));
@@ -15,68 +19,74 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+// صفحة الواجهة
 app.get('/', (req, res) => {
-  const possiblePaths = [
+  const paths = [
     path.join(__dirname, 'index.html'),
     path.join(__dirname, 'Frontend', 'index.html')
   ];
-  for (const filePath of possiblePaths) {
-    if (require('fs').existsSync(filePath)) {
-      return res.sendFile(filePath);
-    }
+
+  for (const p of paths) {
+    if (fs.existsSync(p)) return res.sendFile(p);
   }
+
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
+// API الدردشة + تحليل الصور
 app.post('/api/chat', upload.single('file'), async (req, res) => {
   try {
-    let prompt = req.body.prompt || "ماذا يوجد في هذه الصورة؟";
+    let prompt = req.body.prompt || "حلل هذه الصورة بدقة.";
     let messages = [
       { role: 'system', content: SYSTEM_INSTRUCTION },
       { role: 'user', content: prompt }
     ];
+
     let activeModel = GROQ_MODEL;
 
+    // إذا المستخدم أرسل صورة
     if (req.file) {
       const ext = path.extname(req.file.originalname).toLowerCase();
-      if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
-        const base64Image = req.file.buffer.toString('base64');
-        const mimeType = req.file.mimetype || 'image/jpeg';
-        const imageUrl = `data:${mimeType};base64,${base64Image}`;
-        
+      const allowed = ['.jpg', '.jpeg', '.png', '.webp'];
+
+      if (allowed.includes(ext)) {
+        const base64 = req.file.buffer.toString('base64');
+        const mime = req.file.mimetype || 'image/jpeg';
+
         messages = [
           { role: 'system', content: SYSTEM_INSTRUCTION },
-          { 
-            role: 'user', 
+          {
+            role: 'user',
             content: [
               { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: imageUrl } }
-            ] 
+              { type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } }
+            ]
           }
         ];
+
         activeModel = "llama-3.2-11b-vision-preview";
       }
     }
 
-    const chatCompletion = await groq.chat.completions.create({
-      messages: messages,
-      model: activeModel,
+    const completion = await groq.chat.completions.create({
+      messages,
+      model: activeModel
     });
 
-    const reply = chatCompletion.choices[0]?.message?.content || "تم الاستلام بنجاح.";
-    
-    res.json({ 
-      success: true, 
-      bot: BOT_NAME, 
-      creator: DEVELOPER_NAME, 
-      reply: reply 
+    const reply = completion.choices[0]?.message?.content || "تمت المعالجة بنجاح.";
+
+    res.json({
+      success: true,
+      bot: BOT_NAME,
+      creator: DEVELOPER_NAME,
+      reply
     });
 
-  } catch (error) {
-    console.error("API Error:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: "حدث خطأ أثناء معالجة الصورة أو النص." 
+  } catch (err) {
+    console.error("API Error:", err);
+    res.status(500).json({
+      success: false,
+      error: "حدث خطأ أثناء معالجة الصورة أو النص."
     });
   }
 });
