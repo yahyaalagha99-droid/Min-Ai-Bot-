@@ -8,7 +8,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(express.json());
 
-// توفير الملفات الثابتة من مجلدات المشروع
+// توفير الملفات الثابتة
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'Frontend')));
 
@@ -37,13 +37,13 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "مرحباً";
 
-    // استخدام نموذج llama-3.3-70b-versatile السريع والأفضل للغة العربية
+    // استخدام النموذج السريع والمستقر والمجاني على Groq
     const chatCompletion = await groq.chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_INSTRUCTION },
         { role: 'user', content: prompt }
       ],
-      model: 'llama-3.3-70b-versatile',
+      model: 'llama-3.1-8b-instant', 
     });
 
     const reply = chatCompletion.choices[0]?.message?.content || "لم يتم استلام رد.";
