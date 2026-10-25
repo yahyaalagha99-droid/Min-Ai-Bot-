@@ -1,4 +1,4 @@
-// server.js - السيرفر المحدث لحل مشكلة حجم الملفات والذاكرة
+// server.js - السيرفر الداعم لموقع الويب وتيليجرام معاً
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -16,7 +16,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ذاكرة مؤقتة لتسجيل المحادثات
+// ذاكرة مؤقتة لموقع الويب
 let conversationHistory = [
   { role: 'system', content: SYSTEM_INSTRUCTION }
 ];
@@ -34,21 +34,19 @@ app.get('/', (req, res) => {
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-// API المحادثة مع معالجة ذكية وآمنة للملفات والصور
+// API موقع الويب
 app.post('/api/chat', upload.single('file'), async (req, res) => {
   try {
     let prompt = req.body.prompt || "";
     const clientTime = req.body.clientTime || new Date().toLocaleString();
     const clientTimeZone = req.body.clientTimeZone || "Unknown";
 
-    // التحقق من نوع الملف المرفق لمنع أخطاء الحجم
     if (req.file) {
       const ext = path.extname(req.file.originalname).toLowerCase();
       if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
         prompt += `\n[ملاحظة: قام المستخدم برفع صورة باسم (${req.file.originalname})]`;
       } else {
         const fileContent = req.file.buffer.toString('utf8');
-        // اقتصاص محتوى الملف إذا كان طويلاً جداً لتفادي تجاوز الحد المسموح
         const trimmedContent = fileContent.length > 2000 ? fileContent.substring(0, 2000) + "\n[تم اقتصاص باقي الملف...]" : fileContent;
         prompt += `\n[محتوى الملف المرفق (${req.file.originalname}):\n${trimmedContent}\n]`;
       }
@@ -59,7 +57,6 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
 
     conversationHistory.push({ role: 'user', content: fullUserMessage });
 
-    // تقليص حجم الذاكرة للحفاظ على حدود النموذج
     if (conversationHistory.length > 8) {
       const systemPrompt = conversationHistory[0];
       conversationHistory = [systemPrompt, ...conversationHistory.slice(-6)];
@@ -71,23 +68,61 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
     });
 
     const reply = chatCompletion.choices[0]?.message?.content || "لم يتم استلام رد.";
-
     conversationHistory.push({ role: 'assistant', content: reply });
 
-    res.json({
-      success: true,
-      bot: BOT_NAME,
-      creator: DEVELOPER_NAME,
-      reply: reply
-    });
+    res.json({ success: true, bot: BOT_NAME, creator: DEVELOPER_NAME, reply: reply });
 
   } catch (error) {
     console.error("Server Error:", error);
-    // مسح الذاكرة مؤقتاً عند حدوث خطأ في الطول لكي يعود العمل فوراً
     conversationHistory = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
-    res.status(500).json({ success: false, error: "تم إعادة ضبط الذاكرة لتجاوز الحد الأقصى. حاول إرسال رسالتك الآن مجدداً." });
+    res.status(500).json({ success: false, error: "تم إعادة ضبط الذاكرة مؤقتاً. حاول مجدداً." });
   }
 });
+
+// ----------------------------------------------------
+// نظام الاستماع لرسائل تيليجرام تلقائياً (Telegram Bot Polling)
+// ----------------------------------------------------
+const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+if (telegramToken) {
+  let offset = 0;
+  setInterval(async () => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${telegramToken}/getUpdates?offset=${offset}&timeout=30`);
+      const data = await res.json();
+      
+      if (data.ok && data.result) {
+        for (const update of data.result) {
+          offset = update.update_id + 1;
+          if (update.message && update.message.text) {
+            const chatId = update.message.chat.id;
+            const userText = update.message.text;
+
+            // إرسال الرسالة إلى نموذج الذكاء الاصطناعي
+            const chatCompletion = await groq.chat.completions.create({
+              messages: [
+                { role: 'system', content: SYSTEM_INSTRUCTION },
+                { role: 'user', content: userText }
+              ],
+              model: GROQ_MODEL,
+            });
+
+            const replyText = chatCompletion.choices[0]?.message?.content || "عذراً، لم أستطع الرد.";
+
+            // الرد على المستخدم في تيليجرام
+            await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: replyText })
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Telegram Polling Error:", err.message);
+    }
+  }, 3000);
+  console.log("🤖 Telegram Bot is active and listening for messages!");
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
