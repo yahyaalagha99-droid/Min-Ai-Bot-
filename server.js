@@ -35,7 +35,7 @@ app.get('/', (req, res) => {
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-// مسار الـ Streaming المتوافق مع واجهة الموقع ومعالجة الصور
+// مسار الـ Streaming المعالج للنصوص والصور
 app.post('/ask/stream', async (req, res) => {
   try {
     let { messages } = req.body;
@@ -54,9 +54,9 @@ app.post('/ask/stream', async (req, res) => {
       hasImage = lastMsg.content.some(c => c.type === 'image_url');
     }
 
-    // إذا وُجِدت صورة، نحول الطلب حصرياً إلى نموذج الـ Vision المدعوم للصور
+    // استخدام أحدث نموذج رؤية مدعوم للصور
     if (hasImage) {
-      activeModel = "llama-3.2-11b-vision-preview";
+      activeModel = "llama-3.2-90b-vision-preview";
     }
 
     const formattedMessages = [
