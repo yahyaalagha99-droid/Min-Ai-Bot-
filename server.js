@@ -37,13 +37,13 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "مرحباً";
 
-    // استخدام النموذج السريع والمستقر والمجاني على Groq
+    // النموذج المعتمد والمستقر على Groq
     const chatCompletion = await groq.chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_INSTRUCTION },
         { role: 'user', content: prompt }
       ],
-      model: 'llama-3.1-8b-instant', 
+      model: 'llama3-8b-8192', // <-- هنا تم التبديل
     });
 
     const reply = chatCompletion.choices[0]?.message?.content || "لم يتم استلام رد.";
