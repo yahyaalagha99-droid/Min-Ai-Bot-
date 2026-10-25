@@ -1,4 +1,4 @@
-// server.js - الملف الأساسي للسيرفر (لا تقم بتعديله مستقبلاً)
+// server.js - الملف الأساسي للسيرفر
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -27,14 +27,17 @@ app.get('/', (req, res) => {
   });
 });
 
-// API استقبال المحادثة
+// API استقبال المحادثة مع التقاط موقع وتوقيت المستخدم تلقائياً
 app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "مرحباً";
+    
+    // استقبال الوقت والمنطقة الزمنية المرسلة من جهاز المستخدم مباشرة
+    const clientTime = req.body.clientTime || new Date().toLocaleString();
+    const clientTimeZone = req.body.clientTimeZone || "Unknown";
 
-    // حقن الوقت والتاريخ الحالي ديناميكياً ليعرف البوت الوقت بدقة
-    const now = new Date();
-    const timeContext = `[Current Context - Time: ${now.toLocaleTimeString()}, Date: ${now.toDateString()}, Year: 2026]`;
+    // دمج السياق الزمني والمكاني للرسالة ليجيب الذكاء الاصطناعي حسب مكان المستخدم
+    const timeContext = `[User Location & Time Context -> Local Time: ${clientTime}, TimeZone: ${clientTimeZone}, Year: 2026]. قم بالإجابة على المستخدم بناءً على توقيت ومكان وجوده الحالي إذا سأل عن الوقت أو التاريخ.`;
     const fullPrompt = `${timeContext}\nUser Message: ${prompt}`;
 
     const chatCompletion = await groq.chat.completions.create({
