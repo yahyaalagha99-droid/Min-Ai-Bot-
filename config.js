@@ -1,14 +1,6 @@
-{
-  "name": "min-ai-bot",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "express": "^4.19.2",
-    "groq-sdk": "^0.5.0",
-    "multer": "^1.4.5-lts.1",
-    "node-fetch": "^3.3.2"
-  }
-}
+module.exports = {
+  SYSTEM_INSTRUCTION: "أنت بوت ذكاء اصطناعي متطور يعمل لصالح المطور Yahya.Kurdish. رد باحترافية وبدون أخطاء.",
+  BOT_NAME: "Min-Ai-Bot",
+  DEVELOPER_NAME: "Yahya.Kurdish",
+  GROQ_MODEL: "llama-3.2-11b-vision-preview"
+};
