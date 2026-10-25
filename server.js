@@ -1,4 +1,4 @@
-// server.js - الملف الأساسي للسيرفر
+// server.js - السيرفر المطور مع الذاكرة ودعم الملفات
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -10,52 +10,64 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(express.json());
 
-// توفير الملفات الثابتة من المجلد الحالي وجمیع المجلدات المحتملة
 app.use(express.static(__dirname));
 app.use(express.static(path.join(__dirname, 'Frontend')));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// جلب مفتاح Groq تلقائياً من Environment Variables
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// صفحة البداية وعرض الواجهة بدقة
+// ذاكرة مؤقتة لتخزين سجل المحادثات (Chat History)
+let conversationHistory = [
+  { role: 'system', content: SYSTEM_INSTRUCTION }
+];
+
 app.get('/', (req, res) => {
   const possiblePaths = [
     path.join(__dirname, 'index.html'),
-    path.join(__dirname, 'Frontend', 'index.html'),
-    path.join(__dirname, 'public', 'index.html')
+    path.join(__dirname, 'Frontend', 'index.html')
   ];
-
-  // إرسال أول ملف index.html يتم يجده السيرفر
   for (const filePath of possiblePaths) {
     if (require('fs').existsSync(filePath)) {
       return res.sendFile(filePath);
     }
   }
-  
-  res.status(404).send('ملف الواجهة index.html غير موجود في المشروع!');
+  res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-// API استقبال المحادثة
-app.post('/api/chat', upload.single('image'), async (req, res) => {
+// API المحادثة المتطورة مع الذاكرة والملفات
+app.post('/api/chat', upload.single('file'), async (req, res) => {
   try {
-    const prompt = req.body.prompt || "مرحباً";
-    
+    let prompt = req.body.prompt || "";
     const clientTime = req.body.clientTime || new Date().toLocaleString();
     const clientTimeZone = req.body.clientTimeZone || "Unknown";
 
-    const timeContext = `[User Location & Time Context -> Local Time: ${clientTime}, TimeZone: ${clientTimeZone}, Year: 2026]. قم بالإجابة على المستخدم بناءً على توقيت ومكان وجوده الحالي إذا سأل عن الوقت أو التاريخ.`;
-    const fullPrompt = `${timeContext}\nUser Message: ${prompt}`;
+    // إذا قام المستخدم برفع ملف، نقوم بقراءة محتوياته النصية وإضافتها للرسالة
+    if (req.file) {
+      const fileContent = req.file.buffer.toString('utf8');
+      prompt += `\n[محتوى الملف المرفق (${req.file.originalname}):\n${fileContent}\n]`;
+    }
+
+    const timeContext = `[Context -> Local Time: ${clientTime}, TimeZone: ${clientTimeZone}, Year: 2026]`;
+    const fullUserMessage = `${timeContext}\n${prompt}`;
+
+    // إضافة رسالة المستخدم إلى الذاكرة
+    conversationHistory.push({ role: 'user', content: fullUserMessage });
+
+    // الحفاظ على حجم الذاكرة لئلا يتجاوز الحدود المسموحة للنموذج (آخر 15 رسالة + النظام)
+    if (conversationHistory.length > 16) {
+      const systemPrompt = conversationHistory[0];
+      conversationHistory = [systemPrompt, ...conversationHistory.slice(-14)];
+    }
 
     const chatCompletion = await groq.chat.completions.create({
-      messages: [
-        { role: 'system', content: SYSTEM_INSTRUCTION },
-        { role: 'user', content: fullPrompt }
-      ],
+      messages: conversationHistory,
       model: GROQ_MODEL,
     });
 
     const reply = chatCompletion.choices[0]?.message?.content || "لم يتم استلام رد.";
+
+    // إضافة رد البوت إلى الذاكرة لتستمر المحادثة بطبيعية
+    conversationHistory.push({ role: 'assistant', content: reply });
 
     res.json({
       success: true,
