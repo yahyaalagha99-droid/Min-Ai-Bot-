@@ -3,6 +3,7 @@ import cors from "cors";
 import multer from "multer";
 import fs from "fs";
 import fetch from "node-fetch";
+import FormData from "form-data";
 
 const app = express();
 app.use(cors());
@@ -17,13 +18,13 @@ app.post("/api/text", async (req, res) => {
     const userText = req.body.text;
 
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
+,      method: "POST",
       headers: {
         "Authorization": `Bearer ${API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "llama-3.3-70b-versatile", // تم التعديل لنماذج Groq
         messages: [
           { role: "system", content: "You are MAi Bot created by Yahya Kurdish." },
           { role: "user", content: userText }
@@ -32,6 +33,11 @@ app.post("/api/text", async (req, res) => {
     });
 
     const data = await response.json();
+    
+    if (data.error) {
+      return res.json({ error: data.error.message });
+    }
+
     res.json({ reply: data.choices[0].message.content });
 
   } catch (err) {
@@ -52,16 +58,18 @@ app.post("/api/image", upload.single("image"), async (req, res) => {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "llama-3.2-90b-vision-preview", // نموذج يدعم الصور في Groq
         messages: [
           { role: "system", content: "You are MAi Bot created by Yahya Kurdish." },
           {
             role: "user",
             content: [
-              { type: "input_text", text: "حلل هذه الصورة" },
+              { type: "text", text: "حلل هذه الصورة" },
               {
-                type: "input_image",
-                image_url: `data:image/jpeg;base64,${imgBuffer.toString("base64")}`
+                type: "image_url",
+                image_url: {
+                  url: `data:image/jpeg;base64,${imgBuffer.toString("base64")}`
+                }
               }
             ]
           }
@@ -72,9 +80,14 @@ app.post("/api/image", upload.single("image"), async (req, res) => {
     const data = await response.json();
     fs.unlinkSync(imgPath);
 
+    if (data.error) {
+      return res.json({ error: data.error.message });
+    }
+
     res.json({ reply: data.choices[0].message.content });
 
   } catch (err) {
+    if (req.file) fs.unlinkSync(req.file.path);
     res.json({ error: err.message });
   }
 });
@@ -83,22 +96,32 @@ app.post("/api/image", upload.single("image"), async (req, res) => {
 app.post("/api/audio", upload.single("audio"), async (req, res) => {
   try {
     const audioPath = req.file.path;
-    const audioBuffer = fs.readFileSync(audioPath);
+
+    // استخدام FormData لإرسال الملف بالشكل الصحيح لـ Groq
+    const form = new FormData();
+    form.append("file", fs.createReadStream(audioPath));
+    form.append("model", "whisper-large-v3");
 
     const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${API_KEY}`
+        "Authorization": `Bearer ${API_KEY}`,
+        ...form.getHeaders()
       },
-      body: audioBuffer
+      body: form
     });
 
     const data = await response.json();
     fs.unlinkSync(audioPath);
 
+    if (data.error) {
+      return res.json({ error: data.error.message });
+    }
+
     res.json({ text: data.text });
 
   } catch (err) {
+    if (req.file) fs.unlinkSync(req.file.path);
     res.json({ error: err.message });
   }
 });
