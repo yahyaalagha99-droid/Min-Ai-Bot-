@@ -1,3 +1,119 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Ai Bot</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    body {
+      background-color: #0f0c20;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background-color: #161233;
+      padding: 15px 20px;
+      text-align: center;
+      border-bottom: 1px solid #2a2456;
+    }
+    header h1 {
+      font-size: 1.4rem;
+      color: #8b5cf6;
+    }
+    header p {
+      font-size: 0.8rem;
+      color: #aaa;
+      margin-top: 4px;
+    }
+    #chat-container {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .message {
+      max-width: 80%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      line-height: 1.5;
+      font-size: 0.95rem;
+      word-wrap: break-word;
+    }
+    .user-message {
+      align-self: flex-end;
+      background-color: #6366f1;
+      color: white;
+      border-bottom-right-radius: 2px;
+    }
+    .bot-message {
+      align-self: flex-start;
+      background-color: #1e1b4b;
+      color: #e0e0e0;
+      border-bottom-left-radius: 2px;
+      border: 1px solid #312e81;
+    }
+    #input-form {
+      display: flex;
+      padding: 12px;
+      background-color: #161233;
+      border-top: 1px solid #2a2456;
+      gap: 8px;
+      align-items: center;
+    }
+    #prompt-input {
+      flex: 1;
+      padding: 12px;
+      border: 1px solid #312e81;
+      border-radius: 8px;
+      background-color: #0f0c20;
+      color: white;
+      outline: none;
+    }
+    #prompt-input:focus {
+      border-color: #6366f1;
+    }
+    button[type="submit"] {
+      background-color: #6366f1;
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button[type="submit"]:hover {
+      background-color: #4f46e5;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>My Ai Bot 🤖</h1>
+    <p>Developed by Yahya.Kurdish</p>
+  </header>
+
+  <div id="chat-container">
+    <div class="message bot-message">
+      أهلاً بك! أنا My Ai Bot. كيف يمكنني مساعدتك اليوم؟
+    </div>
+  </div>
+
+  <form id="input-form">
+    <input type="text" id="prompt-input" placeholder="اكتب رسالتك هنا..." required autocomplete="off">
+    <button type="submit">إرسال ↑</button>
+  </form>
+
   <script>
     const form = document.getElementById('input-form');
     const promptInput = document.getElementById('prompt-input');
@@ -26,18 +142,18 @@
       chatContainer.scrollTop = chatContainer.scrollHeight;
 
       try {
-        // التقاط وقت ومنطقة المستخدم المحلية تلقائياً من جهازه
+        // التقاط وقت ومنطقة المستخدم المحلية وإرسالها للسيرفر
         const clientTime = new Date().toLocaleString();
         const clientTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-        const formData = new FormData();
-        formData.append('prompt', prompt);
-        formData.append('clientTime', clientTime);
-        formData.append('clientTimeZone', clientTimeZone);
-
         const res = await fetch('/api/chat', {
           method: 'POST',
-          body: formData
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            prompt: prompt,
+            clientTime: clientTime,
+            clientTimeZone: clientTimeZone
+          })
         });
         const data = await res.json();
 
@@ -54,3 +170,5 @@
       }
     });
   </script>
+</body>
+</html>
