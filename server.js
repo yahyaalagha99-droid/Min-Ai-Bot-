@@ -1,7 +1,9 @@
+// server.js - الملف الأساسي للسيرفر (لا تقم بتعديله مستقبلاً)
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const Groq = require('groq-sdk');
+const { SYSTEM_INSTRUCTION, BOT_NAME, DEVELOPER_NAME, GROQ_MODEL } = require('./config');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -15,14 +17,7 @@ app.use(express.static(path.join(__dirname, 'Frontend')));
 // جلب مفتاح Groq تلقائياً من Environment Variables
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// تعليمات الشخصية للبوت
-const SYSTEM_INSTRUCTION = `
-اسمك: My Ai Bot
-المطور: Yahya.Kurdish
-أنت مساعد ذكي ولطيف ومستعد للمساعدة في كل الأوقات.
-`;
-
-// عند فتح الرابط الرئيسي يتم عرض واجهة HTML
+// صفحة البداية وعرض الواجهة
 app.get('/', (req, res) => {
   const htmlPath = path.join(__dirname, 'index.html');
   res.sendFile(htmlPath, (err) => {
@@ -37,21 +32,25 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "مرحباً";
 
-    // استخدام أحدث وأضمن نموذج نشط ومستقر على منصة Groq
+    // حقن الوقت والتاريخ الحالي ديناميكياً ليعرف البوت الوقت بدقة
+    const now = new Date();
+    const timeContext = `[Current Context - Time: ${now.toLocaleTimeString()}, Date: ${now.toDateString()}, Year: 2026]`;
+    const fullPrompt = `${timeContext}\nUser Message: ${prompt}`;
+
     const chatCompletion = await groq.chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_INSTRUCTION },
-        { role: 'user', content: prompt }
+        { role: 'user', content: fullPrompt }
       ],
-      model: 'openai/gpt-oss-120b',
+      model: GROQ_MODEL,
     });
 
     const reply = chatCompletion.choices[0]?.message?.content || "لم يتم استلام رد.";
 
     res.json({
       success: true,
-      bot: "My Ai Bot",
-      creator: "Yahya.Kurdish",
+      bot: BOT_NAME,
+      creator: DEVELOPER_NAME,
       reply: reply
     });
 
@@ -63,5 +62,5 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`My Ai Bot server running on port ${PORT}`);
+  console.log(`${BOT_NAME} server running on port ${PORT}, created by ${DEVELOPER_NAME}`);
 });
