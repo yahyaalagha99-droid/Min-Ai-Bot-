@@ -55,7 +55,7 @@ app.post('/ask/stream', async (req, res) => {
     if (lastMsg && Array.isArray(lastMsg.content)) {
       const hasImage = lastMsg.content.some(c => c.type === 'image_url');
       if (hasImage) {
-        activeModel = "llama-3.2-11b-vision-preview";
+        activeModel = "openai/gpt-oss-120b";
       }
     }
 
