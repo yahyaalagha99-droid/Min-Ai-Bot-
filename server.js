@@ -8,11 +8,11 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(express.json());
 
-// توفير الملفات الثابتة
+// توفير الملفات الثابتة من المجلدات
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'Frontend')));
 
-// جلب مفتاح Groq تلقائياً من Environment Variables
+// جلب مفتاح Groq من Environment Variables
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // تعليمات الشخصية للبوت
@@ -37,13 +37,13 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
     const prompt = req.body.prompt || "مرحباً";
 
-    // النموذج المعتمد والمستقر على Groq
+    // استخدام النموذج الرسمي النشط llama-3.1-8b-instant
     const chatCompletion = await groq.chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_INSTRUCTION },
         { role: 'user', content: prompt }
       ],
-      model: 'llama3-8b-8192', // <-- هنا تم التبديل
+      model: 'llama-3.1-8b-instant', 
     });
 
     const reply = chatCompletion.choices[0]?.message?.content || "لم يتم استلام رد.";
