@@ -1,4 +1,4 @@
-// server.js - السيرفر الداعم لموقع الويب وتيليجرام معاً
+// server.js - السيرفر المحدث لدعم الويب وتيليجرام وتحسّن الصور
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -80,7 +80,7 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
 });
 
 // ----------------------------------------------------
-// نظام الاستماع لرسائل تيليجرام تلقائياً (Telegram Bot Polling)
+// نظام الاستماع لرسائل تيليجرام (مع دعم النصوص والتعليقات على الصور)
 // ----------------------------------------------------
 const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
 if (telegramToken) {
@@ -93,27 +93,36 @@ if (telegramToken) {
       if (data.ok && data.result) {
         for (const update of data.result) {
           offset = update.update_id + 1;
-          if (update.message && update.message.text) {
+          
+          if (update.message) {
             const chatId = update.message.chat.id;
-            const userText = update.message.text;
+            let userText = "";
 
-            // إرسال الرسالة إلى نموذج الذكاء الاصطناعي
-            const chatCompletion = await groq.chat.completions.create({
-              messages: [
-                { role: 'system', content: SYSTEM_INSTRUCTION },
-                { role: 'user', content: userText }
-              ],
-              model: GROQ_MODEL,
-            });
+            if (update.message.text) {
+              userText = update.message.text;
+            } else if (update.message.caption) {
+              userText = update.message.caption + " [ملاحظة: المستخدم أرفق هذه الرسالة مع صورة]";
+            } else if (update.message.photo) {
+              userText = "مرحباً، لقد أرسلت صورة للتو. بصفتك مساعداً ذكياً، اطلب مني توضيحاً أو اذكر لي النص الموجود فيها إن أمكن لمساعدتك بشكل أفضل.";
+            }
 
-            const replyText = chatCompletion.choices[0]?.message?.content || "عذراً، لم أستطع الرد.";
+            if (userText) {
+              const chatCompletion = await groq.chat.completions.create({
+                messages: [
+                  { role: 'system', content: SYSTEM_INSTRUCTION },
+                  { role: 'user', content: userText }
+                ],
+                model: GROQ_MODEL,
+              });
 
-            // الرد على المستخدم في تيليجرام
-            await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, text: replyText })
-            });
+              const replyText = chatCompletion.choices[0]?.message?.content || "عذراً، لم أستطع الرد.";
+
+              await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, text: replyText })
+              });
+            }
           }
         }
       }
