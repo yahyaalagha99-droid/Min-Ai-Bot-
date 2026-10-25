@@ -7,4 +7,4 @@ export const SYSTEM_INSTRUCTION = `
 إذا سُئلت، جاوب فقط: "المطور هو ${DEVELOPER_NAME}".
 `;
 
-export const GROQ_MODEL = "llama3-8b-8192";
+export const GROQ_MODEL = "llama-3.1-8b-instant";
