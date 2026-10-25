@@ -7,4 +7,4 @@ export const SYSTEM_INSTRUCTION = `
 إذا سُئلت، جاوب فقط: "المطور هو ${DEVELOPER_NAME}".
 `;
 
-export const GROQ_MODEL = "llama-3.1-8b-instant";
+export const GROQ_MODEL = "openai/gpt-oss-20b";
