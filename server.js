@@ -1,4 +1,4 @@
-// server.js - السيرفر المطور مع الذاكرة ودعم الملفات
+// server.js - السيرفر المحدث لحل مشكلة حجم الملفات والذاكرة
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -16,7 +16,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ذاكرة مؤقتة لتخزين سجل المحادثات (Chat History)
+// ذاكرة مؤقتة لتسجيل المحادثات
 let conversationHistory = [
   { role: 'system', content: SYSTEM_INSTRUCTION }
 ];
@@ -34,29 +34,35 @@ app.get('/', (req, res) => {
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-// API المحادثة المتطورة مع الذاكرة والملفات
+// API المحادثة مع معالجة ذكية وآمنة للملفات والصور
 app.post('/api/chat', upload.single('file'), async (req, res) => {
   try {
     let prompt = req.body.prompt || "";
     const clientTime = req.body.clientTime || new Date().toLocaleString();
     const clientTimeZone = req.body.clientTimeZone || "Unknown";
 
-    // إذا قام المستخدم برفع ملف، نقوم بقراءة محتوياته النصية وإضافتها للرسالة
+    // التحقق من نوع الملف المرفق لمنع أخطاء الحجم
     if (req.file) {
-      const fileContent = req.file.buffer.toString('utf8');
-      prompt += `\n[محتوى الملف المرفق (${req.file.originalname}):\n${fileContent}\n]`;
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
+        prompt += `\n[ملاحظة: قام المستخدم برفع صورة باسم (${req.file.originalname})]`;
+      } else {
+        const fileContent = req.file.buffer.toString('utf8');
+        // اقتصاص محتوى الملف إذا كان طويلاً جداً لتفادي تجاوز الحد المسموح
+        const trimmedContent = fileContent.length > 2000 ? fileContent.substring(0, 2000) + "\n[تم اقتصاص باقي الملف...]" : fileContent;
+        prompt += `\n[محتوى الملف المرفق (${req.file.originalname}):\n${trimmedContent}\n]`;
+      }
     }
 
     const timeContext = `[Context -> Local Time: ${clientTime}, TimeZone: ${clientTimeZone}, Year: 2026]`;
     const fullUserMessage = `${timeContext}\n${prompt}`;
 
-    // إضافة رسالة المستخدم إلى الذاكرة
     conversationHistory.push({ role: 'user', content: fullUserMessage });
 
-    // الحفاظ على حجم الذاكرة لئلا يتجاوز الحدود المسموحة للنموذج (آخر 15 رسالة + النظام)
-    if (conversationHistory.length > 16) {
+    // تقليص حجم الذاكرة للحفاظ على حدود النموذج
+    if (conversationHistory.length > 8) {
       const systemPrompt = conversationHistory[0];
-      conversationHistory = [systemPrompt, ...conversationHistory.slice(-14)];
+      conversationHistory = [systemPrompt, ...conversationHistory.slice(-6)];
     }
 
     const chatCompletion = await groq.chat.completions.create({
@@ -66,7 +72,6 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
 
     const reply = chatCompletion.choices[0]?.message?.content || "لم يتم استلام رد.";
 
-    // إضافة رد البوت إلى الذاكرة لتستمر المحادثة بطبيعية
     conversationHistory.push({ role: 'assistant', content: reply });
 
     res.json({
@@ -78,11 +83,13 @@ app.post('/api/chat', upload.single('file'), async (req, res) => {
 
   } catch (error) {
     console.error("Server Error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    // مسح الذاكرة مؤقتاً عند حدوث خطأ في الطول لكي يعود العمل فوراً
+    conversationHistory = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
+    res.status(500).json({ success: false, error: "تم إعادة ضبط الذاكرة لتجاوز الحد الأقصى. حاول إرسال رسالتك الآن مجدداً." });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`${BOT_NAME} server running on port ${PORT}, created by ${DEVELOPER_NAME}`);
+  console.log(`${BOT_NAME} server running on port ${PORT}`);
 });
