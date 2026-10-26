@@ -21,6 +21,31 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+// ===== الإعدادات الجديدة =====
+// llama-3.2-90b-vision-preview أوقفه نهائياً بتاريخ 14/04/2025 (رسمياً من Groq)
+// البديل الرسمي: meta-llama/llama-4-scout-17b-16e-instruct (يدعم النصوص والصور)
+const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+
+// فحص هل الرسالة تحتوي صورة
+function messageHasImage(msg) {
+  return msg && Array.isArray(msg.content) && msg.content.some(c => c.type === 'image_url');
+}
+
+// تحويل بافر الصورة المرفوعة إلى Data URL بصيغة base64
+function bufferToImageUrl(file) {
+  return `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
+}
+
+// تحليل messages بأمان (قد تصل كنص نصي عند الإرسال عبر FormData)
+function parseMessages(raw) {
+  if (!raw) return null;
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try { parsed = JSON.parse(raw); } catch (e) { return null; }
+  }
+  return Array.isArray(parsed) && parsed.length ? parsed : null;
+}
+
 // الصفحة الرئيسية لتشغيل واجهة الموقع
 app.get('/', (req, res) => {
   const possiblePaths = [
@@ -36,28 +61,42 @@ app.get('/', (req, res) => {
 });
 
 // مسار الـ Streaming المعالج للنصوص والصور
-app.post('/ask/stream', async (req, res) => {
+// التغيير: upload.single('image') اختياري — يقبل JSON العادي كما هو، ويقبل أيضاً صورة مرفوعة باسم image
+app.post('/ask/stream', upload.single('image'), async (req, res) => {
   try {
-    let { messages } = req.body;
-    
-    if (!messages || !Array.isArray(messages)) {
+    let messages = parseMessages(req.body.messages);
+
+    if (!messages) {
       messages = [{ role: 'user', content: "مرحباً" }];
     }
 
-    let activeModel = GROQ_MODEL; // النموذج الأساسي للنصوص
-    
-    // فحص ما إذا كانت الرسالة الأخيرة تحتوي على صورة
-    const lastMsg = messages[messages.length - 1];
-    let hasImage = false;
+    // إذا وصلت صورة مرفوعة (multipart/form-data) نضيفها لآخر رسالة كـ image_url
+    if (req.file) {
+      const lastMsg = messages[messages.length - 1];
+      const textPart =
+        (typeof lastMsg?.content === "string" && lastMsg.content.trim()) ||
+        req.body.prompt || req.body.text || "صف لي ما في هذه الصورة";
 
-    if (lastMsg && Array.isArray(lastMsg.content)) {
-      hasImage = lastMsg.content.some(c => c.type === 'image_url');
+      lastMsg.content = [
+        { type: "text", text: textPart },
+        { type: "image_url", image_url: { url: bufferToImageUrl(req.file) } }
+      ];
     }
 
-    // استخدام أحدث نموذج رؤية مدعوم للصور
-    if (hasImage) {
-      activeModel = "llama-3.2-90b-vision-preview";
+    // إزالة الصور من الرسائل القديمة (نُبقي صورة آخر رسالة فقط)
+    // لتجنب تجاوز الحد الأقصى للصور وتقليل حجم الطلب
+    for (let i = 0; i < messages.length - 1; i++) {
+      if (messageHasImage(messages[i])) {
+        messages[i].content = messages[i].content.filter(c => c.type !== 'image_url');
+        if (!messages[i].content.some(c => c.type === 'text')) {
+          messages[i].content.push({ type: "text", text: "[صورة سابقة]" });
+        }
+      }
     }
+
+    // اختيار النموذج: نموذج الرؤية إذا الطلب يحتوي صورة، وإلا نموذج النصوص الأساسي
+    const hasImage = messages.some(messageHasImage);
+    const activeModel = hasImage ? VISION_MODEL : GROQ_MODEL;
 
     const formattedMessages = [
       { role: 'system', content: SYSTEM_INSTRUCTION },
