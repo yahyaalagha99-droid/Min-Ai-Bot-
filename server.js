@@ -22,9 +22,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ===== الإعدادات الجديدة =====
-// llama-3.2-90b-vision-preview أوقفه نهائياً بتاريخ 14/04/2025 (رسمياً من Groq)
-// البديل الرسمي: meta-llama/llama-4-scout-17b-16e-instruct (يدعم النصوص والصور)
-const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+// llama-3.2-90b-vision-preview و llama-4-scout أوقفهما رسمياً من Groq
+// نموذج الرؤية الحالي المتاح رسمياً على Groq: qwen/qwen3.8-27b
+const VISION_MODEL = "qwen/qwen3.8-27b";
 
 // فحص هل الرسالة تحتوي صورة
 function messageHasImage(msg) {
