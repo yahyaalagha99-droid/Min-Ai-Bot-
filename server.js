@@ -136,3 +136,93 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`${BOT_NAME} server running on port ${PORT}`);
 });
+// ============================================================
+// بلوك مسارات API للبوتات
+// ============================================================
+
+// نص ← رد
+app.post('/api/text', async (req, res) => {
+  try {
+    const text = (req.body && req.body.text) || "";
+    if (!text.trim()) return res.status(400).json({ error: "لا يوجد نص" });
+
+    const completion = await groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: SYSTEM_INSTRUCTION },
+        { role: 'user', content: text }
+      ],
+      model: GROQ_MODEL,
+    });
+
+    res.json({ reply: completion.choices[0]?.message?.content || "..." });
+  } catch (error) {
+    console.error("API /api/text Error:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// صورة + نص اختياري ← رد
+app.post('/api/image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "لا توجد صورة" });
+
+    const prompt = req.body.prompt || "صف لي ما في هذه الصورة";
+    const dataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+
+    const completion = await groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: SYSTEM_INSTRUCTION },
+        {
+          role: 'user',
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: dataUrl } }
+          ]
+        }
+      ],
+      model: VISION_MODEL,
+    });
+
+    res.json({ reply: completion.choices[0]?.message?.content || "..." });
+  } catch (error) {
+    console.error("API /api/image Error:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// صوت ← تحويل إلى نص ثم رد
+app.post('/api/audio', upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "لا يوجد صوت" });
+
+    // Groq يتطلب اسم ملف بامتداد صحيح
+    const fileName = (req.file.originalname && req.file.originalname.includes("."))
+      ? req.file.originalname
+      : "voice.ogg";
+
+    const transcription = await groq.audio.transcriptions.create({
+      file: new File([req.file.buffer], fileName, { type: req.file.mimetype }),
+      model: "whisper-large-v3",
+    });
+
+    const userText = transcription.text || "";
+
+    const completion = await groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: SYSTEM_INSTRUCTION },
+        { role: 'user', content: userText }
+      ],
+      model: GROQ_MODEL,
+    });
+
+    // ⚠️ البوت يقرأ المفتاح text لمسار الصوت — لا تغيره إلى reply
+    res.json({ text: completion.choices[0]?.message?.content || "..." });
+  } catch (error) {
+    console.error("API /api/audio Error:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================
+// نهاية بلوك مسارات البوتات
+// ============================================================
