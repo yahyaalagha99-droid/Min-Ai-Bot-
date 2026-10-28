@@ -21,7 +21,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ===== الإعدادات الجديدة =====
+// ===== الإعدادات =====
 // llama-3.2-90b-vision-preview و llama-4-scout أوقفهما رسمياً من Groq
 // نموذج الرؤية الحالي المتاح رسمياً على Groq: qwen/qwen3.8-27b
 const VISION_MODEL = "qwen/qwen3.8-27b";
@@ -60,8 +60,7 @@ app.get('/', (req, res) => {
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-// مسار الـ Streaming المعالج للنصوص والصور
-// التغيير: upload.single('image') اختياري — يقبل JSON العادي كما هو، ويقبل أيضاً صورة مرفوعة باسم image
+// مسار الـ Streaming المعالج للنصوص والصور (الواجهة)
 app.post('/ask/stream', upload.single('image'), async (req, res) => {
   try {
     let messages = parseMessages(req.body.messages);
@@ -84,7 +83,6 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
     }
 
     // إزالة الصور من الرسائل القديمة (نُبقي صورة آخر رسالة فقط)
-    // لتجنب تجاوز الحد الأقصى للصور وتقليل حجم الطلب
     for (let i = 0; i < messages.length - 1; i++) {
       if (messageHasImage(messages[i])) {
         messages[i].content = messages[i].content.filter(c => c.type !== 'image_url');
@@ -132,10 +130,6 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`${BOT_NAME} server running on port ${PORT}`);
-});
 // ============================================================
 // بلوك مسارات API للبوتات
 // ============================================================
@@ -226,3 +220,13 @@ app.post('/api/audio', upload.single('audio'), async (req, res) => {
 // ============================================================
 // نهاية بلوك مسارات البوتات
 // ============================================================
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`${BOT_NAME} server running on port ${PORT}`);
+});
+
+// تشغيل بوت تيليجرام من نفس العملية
+if (process.env.TELEGRAM_BOT_TOKEN) {
+  import("./telegram.js").catch(err => console.error("Telegram bot failed:", err.message));
+}
