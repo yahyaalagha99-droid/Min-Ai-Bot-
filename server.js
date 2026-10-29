@@ -21,17 +21,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ===== الإعدادات =====
 const VISION_MODEL = "qwen/qwen3.8-27b";
 
-// --- دالة مساعدة لجلب أسعار الأسواق الحية (الذهب والعملات الرقمية) ---
+// دالة لجلب الأسعار الحية
 async function fetchLiveMarketData(query) {
   const q = query.toLowerCase();
   try {
-    // جلب سعر الذهب والمعادن أو العملات إذا طلب المستخدم ذلك
     if (q.includes("ذهب") || q.includes("gold") || q.includes("سعر الذهب")) {
-      const res = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=usd"); // مثال أو مصدر بديل
-      // سنستخدم مصدر عام مجاني وموثوق لأسعار المعادن الثمينة أو العملات الرقمية
       const goldRes = await fetch("https://data-asg.goldprice.org/dbXRates/USD");
       if (goldRes.ok) {
         const data = await goldRes.json();
@@ -42,7 +38,6 @@ async function fetchLiveMarketData(query) {
       }
     }
     
-    // جلب أسعار العملات الرقمية الشهيرة فورياً
     if (q.includes("bitcoin") || q.includes("btc") || q.includes("بتكوين") || q.includes("العملات الرقمية")) {
       const cryptoRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd");
       if (cryptoRes.ok) {
@@ -52,6 +47,7 @@ async function fetchLiveMarketData(query) {
                `• Ethereum (ETH): $${cData.ethereum?.usd || "N/A"}\n` +
                `• Solana (SOL): $${cData.solana?.usd || "N/A"}\n` +
                `*(محدث لحظياً)*`;
+      }
     }
   } catch (e) {
     console.error("Live Market Fetch Error:", e.message);
@@ -59,17 +55,14 @@ async function fetchLiveMarketData(query) {
   return null;
 }
 
-// فحص هل الرسالة تحتوي صورة
 function messageHasImage(msg) {
   return msg && Array.isArray(msg.content) && msg.content.some(c => c.type === 'image_url');
 }
 
-// تحويل بافر الصورة المرفوعة إلى Data URL بصيغة base64
 function bufferToImageUrl(file) {
   return `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
 }
 
-// تحليل messages بأمان (قد تصل كنص نصي عند الإرسال عبر FormData)
 function parseMessages(raw) {
   if (!raw) return null;
   let parsed = raw;
@@ -79,7 +72,6 @@ function parseMessages(raw) {
   return Array.isArray(parsed) && parsed.length ? parsed : null;
 }
 
-// الصفحة الرئيسية لتشغيل واجهة الموقع
 app.get('/', (req, res) => {
   const possiblePaths = [
     path.join(__dirname, 'index.html'),
@@ -93,7 +85,6 @@ app.get('/', (req, res) => {
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-// مسار الـ Streaming المعالج للنصوص والصور (الواجهة)
 app.post('/ask/stream', upload.single('image'), async (req, res) => {
   try {
     let messages = parseMessages(req.body.messages);
@@ -130,7 +121,6 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    // التحقق إذا كان الطلب يسأل عن أسعار حية
     if (textToCheck) {
       const liveData = await fetchLiveMarketData(textToCheck);
       if (liveData) {
@@ -174,17 +164,11 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
   }
 });
 
-// ============================================================
-// بلوك مسارات API للبوتات
-// ============================================================
-
-// نص ← رد
 app.post('/api/text', async (req, res) => {
   try {
     const text = (req.body && req.body.text) || "";
     if (!text.trim()) return res.status(400).json({ error: "لا يوجد نص" });
 
-    // فحص إذا كان السؤال عن الذهب أو العملات لجلب السعر الفوري المباشر
     const liveData = await fetchLiveMarketData(text);
     if (liveData) {
       return res.json({ reply: liveData });
@@ -205,7 +189,6 @@ app.post('/api/text', async (req, res) => {
   }
 });
 
-// صورة + نص اختياري ← رد
 app.post('/api/image', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "لا توجد صورة" });
@@ -234,7 +217,6 @@ app.post('/api/image', upload.single('image'), async (req, res) => {
   }
 });
 
-// صوت ← تحويل إلى نص ثم رد
 app.post('/api/audio', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "لا يوجد صوت" });
@@ -250,7 +232,6 @@ app.post('/api/audio', upload.single('audio'), async (req, res) => {
 
     const userText = transcription.text || "";
 
-    // فحص الصوت إن كان يسأل عن الذهب أو العملات لجلب السعر الفوري
     const liveData = await fetchLiveMarketData(userText);
     if (liveData) {
       return res.json({ text: liveData });
@@ -271,16 +252,11 @@ app.post('/api/audio', upload.single('audio'), async (req, res) => {
   }
 });
 
-// ============================================================
-// نهاية بلوك مسارات البوتات
-// ============================================================
-
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`${BOT_NAME} server running on port ${PORT}`);
 });
 
-// تشغيل بوت تيليجرام من نفس العملية
 if (process.env.TELEGRAM_BOT_TOKEN) {
   import("./telegram.js").catch(err => console.error("Telegram bot failed:", err.message));
 }
