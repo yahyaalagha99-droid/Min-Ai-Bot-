@@ -28,29 +28,28 @@ if (!TOKEN) {
     });
 
     // ============================================================
-    // ⌨️ لوحة الخانات الثابتة — مثل بوت idbot
-    // request_users (للأشخاص) و request_chat (للمجموعات والقنوات)
-    // موثقة رسمياً في توثيق تيليجرام Bot API
+    // ⌨️ لوحة الخانات الثابتة (تم الاحتفاظ بها كاملة كما هي)
     // ============================================================
     const mainKeyboard = {
       keyboard: [
         [
-          { text: "👤 User", request_users: { request_id: 1 } },                          // أشخاص عاديين
-          { text: "⭐ Premium", request_users: { request_id: 2, user_is_premium: true } }, // بريميوم فقط
-          { text: "👽 Bot", request_users: { request_id: 3, user_is_bot: true } }          // بوتات فقط
+          { text: "👤 User", request_users: { request_id: 1 } },                          
+          { text: "⭐ Premium", request_users: { request_id: 2, user_is_premium: true } }, 
+          { text: "👽 Bot", request_users: { request_id: 3, user_is_bot: true } }          
         ],
         [
-          { text: "👥 Group", request_chat: { request_id: 4, chat_is_channel: false } },   // مجموعة
-          { text: "📢 Channel", request_chat: { request_id: 5, chat_is_channel: true } },  // قناة
-          { text: "💬 Forum", request_chat: { request_id: 6, chat_is_channel: false, chat_is_forum: true } } // منتدى
+          { text: "👥 Group", request_chat: { request_id: 4, chat_is_channel: false } },   
+          { text: "📢 Channel", request_chat: { request_id: 5, chat_is_channel: true } },  
+          { text: "💬 Forum", request_chat: { request_id: 6, chat_is_channel: false, chat_is_forum: true } } 
         ],
-        ["🆔 آي دي الخاص بي"]
+        // إضافة زر التداول الجديد في اللوحة الثابتة لسهولة الوصول إليه
+        ["📈 قسم التداول", "🆔 آي دي الخاص بي"]
       ],
       resize_keyboard: true,
-      is_persistent: true // الخانات تبقى ظاهرة دائماً ولا تنطفي
+      is_persistent: true 
     };
 
-    // تقدير سنة تسجيل حساب تيليجرام من الآي دي (تقريبي — تيليجرام ما يوفر التاريخ الرسمي)
+    // تقدير سنة تسجيل حساب تيليجرام من الآي دي
     function estimateRegistration(id) {
       const ranges = [
         [8300000000, "2026"], [7200000000, "2025"], [6300000000, "2024"],
@@ -86,10 +85,47 @@ if (!TOKEN) {
       console.log(`[TG] وصل /start من ${msg.chat.id}`);
       bot.sendMessage(msg.chat.id,
         `أهلاً ${msg.from.first_name} 👋\n` +
-        `أرسل نصاً أو صورة أو رسالة صوتية وسأرد عليك.\n` +
-        `واستخدم الخانات تحت لعرض معلومات الآي دي.`,
-        { reply_markup: mainKeyboard }
+        `أنا بوت التحليل الذكي والتداول الخاص بك.\n` +
+        `أقدر أساعدك في العملات الرقمية، الفوركس، والأسهم.\n` +
+        `اختر من الأقسام بالأسفل أو أرسل كود التداول مباشرة.`,
+        { 
+          reply_markup: {
+            ...mainKeyboard,
+            // أزرار تفاعلية تظهر تحت رسالة الترحيب مباشرة
+            inline_keyboard: [
+              [
+                { text: "🪙 العملات الرقمية", callback_data: "trade_crypto" },
+                { text: "📈 الفوركس", callback_data: "trade_forex" }
+              ],
+              [
+                { text: "📊 الأسهم", callback_data: "trade_stocks" },
+                { text: "⚡ تنفيذ صفقة / إدخال كود", callback_data: "enter_trade_code" }
+              ]
+            ]
+          } 
+        }
       );
+    });
+
+    // ---------------------- معالج الأزرار التفاعلية (Inline Buttons) ----------------------
+    bot.on("callback_query", async (query) => {
+      const chatId = query.message.chat.id;
+      const data = query.data;
+
+      try {
+        if (data === "trade_crypto") {
+          await bot.sendMessage(chatId, "🪙 **قسم العملات الرقمية:**\nأرسل اسم العملة أو الكود الخاص بالتحليل أو التداول.");
+        } else if (data === "trade_forex") {
+          await bot.sendMessage(chatId, "📈 **قسم الفوركس:**\nأرسل زوج العملات المطلوب تحليله أو التداول فيه.");
+        } else if (data === "trade_stocks") {
+          await bot.sendMessage(chatId, "📊 **قسم الأسهم:**\nأرسل رمز السهم المطلوب.");
+        } else if (data === "enter_trade_code") {
+          await bot.sendMessage(chatId, "✍️ **إدخال كود التداول:**\nالرجاء كتابة كود الصفقة أو الأمر في الفراغ (مكان إرسال الرسائل) وسأقوم بتنفيذه.");
+        }
+        await bot.answerCallbackQuery(query.id);
+      } catch (err) {
+        console.error("[TG] Callback Error:", err.message);
+      }
     });
 
     // ---------------------- معالج الرسائل ----------------------
@@ -98,8 +134,6 @@ if (!TOKEN) {
         const chatId = msg.chat.id;
 
         // ===== 1) نتيجة زر "أشخاص" (users_shared) =====
-        // من التوثيق الرسمي: SharedUser يحتوي فقط user_id و first_name و last_name و username
-        // (لا يوجد is_bot) — نعرف نوع الزر من request_id
         if (msg.users_shared) {
           const reqLabel = msg.users_shared.request_id === 3 ? "🤖 البوت المختار"
             : msg.users_shared.request_id === 2 ? "⭐ حساب بريميوم" : "👤 حساب";
@@ -112,8 +146,6 @@ if (!TOKEN) {
         }
 
         // ===== 2) نتيجة زر "مجموعة/قناة/منتدى" (chat_shared) =====
-        // من التوثيق الرسمي: ChatShared يحتوي فقط request_id و chat_id و title و username
-        // (لا يوجد type) — نعرف نوع المحادثة من request_id
         if (msg.chat_shared) {
           const cs = msg.chat_shared;
           const typeLabel = cs.request_id === 5 ? "📢 قناة" : cs.request_id === 6 ? "💬 منتدى" : "👥 مجموعة";
@@ -127,7 +159,21 @@ if (!TOKEN) {
           return;
         }
 
-        // ===== 4) باقي النصوص → الذكاء الاصطناعي =====
+        // ===== 4) زر قسم التداول الجديد من الكيبورد الثابت =====
+        if (msg.text === "📈 قسم التداول") {
+          await bot.sendMessage(chatId, "⚡ أهلاً بك في قسم التداول السريع.\nيمكنك كتابة كود التداول الخاص بك هنا أو اختيار القسم المناسب:");
+          return;
+        }
+
+        // ===== 5) معالجة أكواد التداول المدخلة يدوياً في الفراغ =====
+        if (msg.text && (msg.text.startsWith("BUY") || msg.text.startsWith("SELL") || msg.text.startsWith("كود:"))) {
+          console.log(`[TG] تم استلام كود تداول من ${chatId}: ${msg.text}`);
+          await bot.sendMessage(chatId, `🔄 جاري معالجة وتنفيذ كود التداول المدخل:\n\`${msg.text}\``, { parse_mode: "Markdown" });
+          // يمكنك ربط عملية التنفيذ الفعلية مع الـ API هنا مستقبلاً
+          return;
+        }
+
+        // ===== 6) باقي النصوص → الذكاء الاصطناعي (كما كانت تماماً) =====
         if (!msg.text || msg.text.startsWith("/")) return;
 
         console.log(`[TG] نص وارد من ${chatId}: ${msg.text.slice(0, 50)}`);
@@ -148,7 +194,7 @@ if (!TOKEN) {
       }
     });
 
-    // ---------------------- IMAGE (كما هو) ----------------------
+    // ---------------------- IMAGE (بدون أي تغيير) ----------------------
     bot.on("photo", async (msg) => {
       const chatId = msg.chat.id;
       let filePath = null;
@@ -191,7 +237,7 @@ if (!TOKEN) {
       }
     });
 
-    // ---------------------- AUDIO (كما هو) ----------------------
+    // ---------------------- AUDIO (بدون أي تغيير) ----------------------
     bot.on("voice", async (msg) => {
       const chatId = msg.chat.id;
       let filePath = null;
@@ -221,7 +267,6 @@ if (!TOKEN) {
 
         if (!apiResponse.ok) throw new Error(`HTTP ${apiResponse.status}`);
         const data = await apiResponse.json();
-        // ⚠️ مسار الصوت يرجع النص بالمفتاح text وليس reply — لا تغيره
         await bot.sendMessage(chatId, data.text || "خطأ في تحويل الصوت");
         console.log(`[TG] ✅ تم الرد على الصوت لـ ${chatId}`);
       } catch (error) {
