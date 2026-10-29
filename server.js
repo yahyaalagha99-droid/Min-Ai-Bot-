@@ -22,9 +22,42 @@ app.use(express.static(path.join(__dirname, 'public')));
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ===== الإعدادات =====
-// llama-3.2-90b-vision-preview و llama-4-scout أوقفهما رسمياً من Groq
-// نموذج الرؤية الحالي المتاح رسمياً على Groq: qwen/qwen3.8-27b
 const VISION_MODEL = "qwen/qwen3.8-27b";
+
+// --- دالة مساعدة لجلب أسعار الأسواق الحية (الذهب والعملات الرقمية) ---
+async function fetchLiveMarketData(query) {
+  const q = query.toLowerCase();
+  try {
+    // جلب سعر الذهب والمعادن أو العملات إذا طلب المستخدم ذلك
+    if (q.includes("ذهب") || q.includes("gold") || q.includes("سعر الذهب")) {
+      const res = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=usd"); // مثال أو مصدر بديل
+      // سنستخدم مصدر عام مجاني وموثوق لأسعار المعادن الثمينة أو العملات الرقمية
+      const goldRes = await fetch("https://data-asg.goldprice.org/dbXRates/USD");
+      if (goldRes.ok) {
+        const data = await goldRes.json();
+        const xauPrice = data.items?.[0]?.xauPrice;
+        if (xauPrice) {
+          return `📊 **السعر الفوري للذهب حالياً:**\n• أونصة الذهب: $${xauPrice.toFixed(2)} USD\n*(محدث لحظياً من الأسواق العالمية)*`;
+        }
+      }
+    }
+    
+    // جلب أسعار العملات الرقمية الشهيرة فورياً
+    if (q.includes("bitcoin") || q.includes("btc") || q.includes("بتكوين") || q.includes("العملات الرقمية")) {
+      const cryptoRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd");
+      if (cryptoRes.ok) {
+        const cData = await cryptoRes.json();
+        return `🪙 **الأسعار الفورية للعملات الرقمية:**\n` +
+               `• Bitcoin (BTC): $${cData.bitcoin?.usd || "N/A"}\n` +
+               `• Ethereum (ETH): $${cData.ethereum?.usd || "N/A"}\n` +
+               `• Solana (SOL): $${cData.solana?.usd || "N/A"}\n` +
+               `*(محدث لحظياً)*`;
+    }
+  } catch (e) {
+    console.error("Live Market Fetch Error:", e.message);
+  }
+  return null;
+}
 
 // فحص هل الرسالة تحتوي صورة
 function messageHasImage(msg) {
@@ -69,7 +102,6 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
       messages = [{ role: 'user', content: "مرحباً" }];
     }
 
-    // إذا وصلت صورة مرفوعة (multipart/form-data) نضيفها لآخر رسالة كـ image_url
     if (req.file) {
       const lastMsg = messages[messages.length - 1];
       const textPart =
@@ -82,7 +114,6 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
       ];
     }
 
-    // إزالة الصور من الرسائل القديمة (نُبقي صورة آخر رسالة فقط)
     for (let i = 0; i < messages.length - 1; i++) {
       if (messageHasImage(messages[i])) {
         messages[i].content = messages[i].content.filter(c => c.type !== 'image_url');
@@ -92,7 +123,24 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
       }
     }
 
-    // اختيار النموذج: نموذج الرؤية إذا الطلب يحتوي صورة، وإلا نموذج النصوص الأساسي
+    const lastUserText = messages[messages.length - 1]?.content;
+    const textToCheck = typeof lastUserText === 'string' ? lastUserText : (Array.isArray(lastUserText) ? lastUserText.find(c => c.type === 'text')?.text : "");
+    
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    // التحقق إذا كان الطلب يسأل عن أسعار حية
+    if (textToCheck) {
+      const liveData = await fetchLiveMarketData(textToCheck);
+      if (liveData) {
+        res.write(`data: ${JSON.stringify({ token: liveData })}\n\n`);
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+    }
+
     const hasImage = messages.some(messageHasImage);
     const activeModel = hasImage ? VISION_MODEL : GROQ_MODEL;
 
@@ -100,10 +148,6 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
       { role: 'system', content: SYSTEM_INSTRUCTION },
       ...messages
     ];
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
 
     const stream = await groq.chat.completions.create({
       messages: formattedMessages,
@@ -139,6 +183,12 @@ app.post('/api/text', async (req, res) => {
   try {
     const text = (req.body && req.body.text) || "";
     if (!text.trim()) return res.status(400).json({ error: "لا يوجد نص" });
+
+    // فحص إذا كان السؤال عن الذهب أو العملات لجلب السعر الفوري المباشر
+    const liveData = await fetchLiveMarketData(text);
+    if (liveData) {
+      return res.json({ reply: liveData });
+    }
 
     const completion = await groq.chat.completions.create({
       messages: [
@@ -189,7 +239,6 @@ app.post('/api/audio', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "لا يوجد صوت" });
 
-    // Groq يتطلب اسم ملف بامتداد صحيح
     const fileName = (req.file.originalname && req.file.originalname.includes("."))
       ? req.file.originalname
       : "voice.ogg";
@@ -201,6 +250,12 @@ app.post('/api/audio', upload.single('audio'), async (req, res) => {
 
     const userText = transcription.text || "";
 
+    // فحص الصوت إن كان يسأل عن الذهب أو العملات لجلب السعر الفوري
+    const liveData = await fetchLiveMarketData(userText);
+    if (liveData) {
+      return res.json({ text: liveData });
+    }
+
     const completion = await groq.chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_INSTRUCTION },
@@ -209,7 +264,6 @@ app.post('/api/audio', upload.single('audio'), async (req, res) => {
       model: GROQ_MODEL,
     });
 
-    // ⚠️ البوت يقرأ المفتاح text لمسار الصوت — لا تغيره إلى reply
     res.json({ text: completion.choices[0]?.message?.content || "..." });
   } catch (error) {
     console.error("API /api/audio Error:", error.message);
