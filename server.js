@@ -23,39 +23,71 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const VISION_MODEL = "qwen/qwen3.8-27b";
 
-// --- دالة قوية جداً ومباشرة لجلب أسعار الأسواق الحية ---
+// --- دالة شاملة ودقيقة جداً لجلب الأسعار العالمية الفورية (تتعرف على أي عملة أو ذهب) ---
 async function fetchLiveMarketData(query) {
   if (!query) return null;
-  const q = query.toLowerCase();
+  const q = query.toLowerCase().trim();
   
   try {
-    // فحص طلب الذهب
+    // 1. فحص الذهب والمعادن الثمينة بدقة تامة
     if (q.includes("ذهب") || q.includes("gold") || q.includes("سعر الذهب")) {
       const goldRes = await fetch("https://data-asg.goldprice.org/dbXRates/USD");
       if (goldRes.ok) {
         const data = await goldRes.json();
         const xauPrice = data.items?.[0]?.xauPrice;
         if (xauPrice) {
-          return `📊 **السعر الفوري للذهب حالياً:**\n• أونصة الذهب: $${xauPrice.toFixed(2)} USD\n*(محدث لحظياً من الأسواق العالمية)*`;
+          const gram24 = (xauPrice / 31.1035).toFixed(2);
+          const gram21 = ((xauPrice / 31.1035) * (21 / 24)).toFixed(2);
+          return `📊 **السعر الفوري للذهب عالمياً:**\n` +
+                 `• أونصة الذهب: \`$${xauPrice.toFixed(2)}\` USD\n` +
+                 `• جرام 24 (تقديري): \`$${gram24}\` USD\n` +
+                 `• جرام 21 (تقديري): \`$${gram21}\` USD\n` +
+                 `*(محدث لحظياً من البورصة العالمية)*`;
         }
       }
-      // مصدر بديل احتياطي للذهب في حال بطء المصدر الأول
-      return `📊 **سعر الذهب العالمي:** يتداول حالياً حول مستويات الأونصة الحالية في البورصة العالمية (محدث من السوق المباشر).`;
-    }
-    
-    // فحص طلب العملات الرقمية
-    if (q.includes("bitcoin") || q.includes("btc") || q.includes("بتكوين") || q.includes("عملات رقمية") || q.includes("crypto") || q.includes("إيثريوم")) {
-      const cryptoRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,ripple&vs_currencies=usd");
-      if (cryptoRes.ok) {
-        const cData = await cryptoRes.json();
-        return `🪙 **الأسعار الفورية للعملات الرقمية:**\n` +
-               `• Bitcoin (BTC): $${cData.bitcoin?.usd || "N/A"}\n` +
-               `• Ethereum (ETH): $${cData.ethereum?.usd || "N/A"}\n` +
-               `• Solana (SOL): $${cData.solana?.usd || "N/A"}\n` +
-               `• Ripple (XRP): $${cData.ripple?.usd || "N/A"}\n` +
-               `*(محدث لحظياً)*`;
+      
+      // مصدر بديل للذهب (PAXG)
+      const paxgRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd,eur");
+      if (paxgRes.ok) {
+        const pData = await paxgRes.json();
+        const price = pData["pax-gold"]?.usd;
+        if (price) {
+          return `📊 **السعر الفوري لأونصة الذهب:** \`$${price}\` USD *(محدث من السوق المباشر)*`;
+        }
       }
     }
+
+    // 2. البحث عن أي عملة رقمية يكتبها المستخدم بالاسم أو الرمز (مثل: solana, btc, pepe, eth, xrp...)
+    // نقوم بالاستعلام عن منصة البحث العامة للعملات الرقمية
+    const searchRes = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`);
+    if (searchRes.ok) {
+      const searchData = await searchRes.json();
+      if (searchData.coins && searchData.coins.length > 0) {
+        // نأخذ أول نتيجة مطابقة بدقة
+        const coinId = searchData.coins[0].id;
+        const coinName = searchData.coins[0].name;
+        const coinSymbol = searchData.coins[0].symbol.toUpperCase();
+
+        // جلب السعر الفوري لهذه العملة بالذات
+        const priceRes = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd,eur&include_24hr_change=true`);
+        if (priceRes.ok) {
+          const priceData = await priceRes.json();
+          const coinInfo = priceData[coinId];
+          if (coinInfo) {
+            const usdPrice = coinInfo.usd;
+            const change24 = coinInfo.usd_24h_change ? coinInfo.usd_24h_change.toFixed(2) : "0.00";
+            const trend = change24 >= 0 ? "📈" : "📉";
+
+            return `🪙 **سعر العملة الفوري:**\n` +
+                   `• الاسم: **${coinName} (${coinSymbol})**\n` +
+                   `• السعر الحالي: \`$${usdPrice}\` USD\n` +
+                   `• التغير خلال 24 ساعة: ${trend} \`${change24}%\`\n` +
+                   `*(محدث لحظياً من الأسواق العالمية)*`;
+          }
+        }
+      }
+    }
+
   } catch (e) {
     console.error("Live Market Fetch Error:", e.message);
   }
@@ -92,7 +124,7 @@ app.get('/', (req, res) => {
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-// مسار الـ Streaming للواجهة مع اعتراض الأسعار الحية أولاً
+// مسار الـ Streaming للواجهة مع اعتراض الأسعار الحية
 app.post('/ask/stream', upload.single('image'), async (req, res) => {
   try {
     let messages = parseMessages(req.body.messages);
@@ -129,7 +161,6 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    // التحقق الفوري من الأسعار الحية
     if (textToCheck) {
       const liveData = await fetchLiveMarketData(textToCheck);
       if (liveData) {
@@ -173,13 +204,13 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
   }
 });
 
-// مسار بوت تيليجرام النصي مع الفحص المباشر للأسعار الحية
+// مسار بوت تيليجرام النصي
 app.post('/api/text', async (req, res) => {
   try {
     const text = (req.body && req.body.text) || "";
     if (!text.trim()) return res.status(400).json({ error: "لا يوجد نص" });
 
-    // فحص سريفر الأسعار الحية قبل تحويله للذكاء الاصطناعي
+    // فحص الأسعار الحية لأي عملة أو ذهب يكتبه المستخدم
     const liveData = await fetchLiveMarketData(text);
     if (liveData) {
       return res.json({ reply: liveData });
@@ -234,7 +265,7 @@ app.post('/api/audio', upload.single('audio'), async (req, res) => {
 
     const fileName = (req.file.originalname && req.file.originalname.includes("."))
       ? req.file.originalname
-      : "voice.ogg";
+      : "voice.org";
 
     const transcription = await groq.audio.transcriptions.create({
       file: new File([req.file.buffer], fileName, { type: req.file.mimetype }),
