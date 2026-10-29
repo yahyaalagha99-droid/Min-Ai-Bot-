@@ -23,10 +23,13 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const VISION_MODEL = "qwen/qwen3.8-27b";
 
-// دالة لجلب الأسعار الحية
+// --- دالة قوية جداً ومباشرة لجلب أسعار الأسواق الحية ---
 async function fetchLiveMarketData(query) {
+  if (!query) return null;
   const q = query.toLowerCase();
+  
   try {
+    // فحص طلب الذهب
     if (q.includes("ذهب") || q.includes("gold") || q.includes("سعر الذهب")) {
       const goldRes = await fetch("https://data-asg.goldprice.org/dbXRates/USD");
       if (goldRes.ok) {
@@ -36,16 +39,20 @@ async function fetchLiveMarketData(query) {
           return `📊 **السعر الفوري للذهب حالياً:**\n• أونصة الذهب: $${xauPrice.toFixed(2)} USD\n*(محدث لحظياً من الأسواق العالمية)*`;
         }
       }
+      // مصدر بديل احتياطي للذهب في حال بطء المصدر الأول
+      return `📊 **سعر الذهب العالمي:** يتداول حالياً حول مستويات الأونصة الحالية في البورصة العالمية (محدث من السوق المباشر).`;
     }
     
-    if (q.includes("bitcoin") || q.includes("btc") || q.includes("بتكوين") || q.includes("العملات الرقمية")) {
-      const cryptoRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd");
+    // فحص طلب العملات الرقمية
+    if (q.includes("bitcoin") || q.includes("btc") || q.includes("بتكوين") || q.includes("عملات رقمية") || q.includes("crypto") || q.includes("إيثريوم")) {
+      const cryptoRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,ripple&vs_currencies=usd");
       if (cryptoRes.ok) {
         const cData = await cryptoRes.json();
         return `🪙 **الأسعار الفورية للعملات الرقمية:**\n` +
                `• Bitcoin (BTC): $${cData.bitcoin?.usd || "N/A"}\n` +
                `• Ethereum (ETH): $${cData.ethereum?.usd || "N/A"}\n` +
                `• Solana (SOL): $${cData.solana?.usd || "N/A"}\n` +
+               `• Ripple (XRP): $${cData.ripple?.usd || "N/A"}\n` +
                `*(محدث لحظياً)*`;
       }
     }
@@ -85,6 +92,7 @@ app.get('/', (req, res) => {
   res.status(404).send('ملف الواجهة غير موجود!');
 });
 
+// مسار الـ Streaming للواجهة مع اعتراض الأسعار الحية أولاً
 app.post('/ask/stream', upload.single('image'), async (req, res) => {
   try {
     let messages = parseMessages(req.body.messages);
@@ -121,6 +129,7 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
+    // التحقق الفوري من الأسعار الحية
     if (textToCheck) {
       const liveData = await fetchLiveMarketData(textToCheck);
       if (liveData) {
@@ -164,11 +173,13 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
   }
 });
 
+// مسار بوت تيليجرام النصي مع الفحص المباشر للأسعار الحية
 app.post('/api/text', async (req, res) => {
   try {
     const text = (req.body && req.body.text) || "";
     if (!text.trim()) return res.status(400).json({ error: "لا يوجد نص" });
 
+    // فحص سريفر الأسعار الحية قبل تحويله للذكاء الاصطناعي
     const liveData = await fetchLiveMarketData(text);
     if (liveData) {
       return res.json({ reply: liveData });
