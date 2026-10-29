@@ -7,10 +7,8 @@ import FormData from "form-data";
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_URL = process.env.API_URL || "http://localhost:10000";
 
-// ===== فحص الإعدادات عند الإقلاع — يطبع السبب بوضوح بلوغات Render =====
-console.log("──────────────────────────────────────");
 console.log("[TG] تشغيل ملف telegram.js ...");
-console.log("[TG] TELEGRAM_BOT_TOKEN:", TOKEN ? `موجود (يبدأ بـ ${TOKEN.slice(0, 6)}...)` : "❌ غير موجود! أضفه في Environment Variables على Render");
+console.log("[TG] TELEGRAM_BOT_TOKEN:", TOKEN ? `موجود (يبدأ بـ ${TOKEN.slice(0, 6)}...)` : "❌ غير موجود!");
 console.log("[TG] API_URL:", API_URL);
 
 if (!TOKEN) {
@@ -25,24 +23,112 @@ if (!TOKEN) {
   }
 
   if (bot) {
-    // أي خطأ polling (مثل 409 تعارض، أو 401 توكن خاطئ) يُطبع بدل أن يُبتلع بصمت
     bot.on("polling_error", (err) => {
       console.error("[TG] ❌ polling_error:", err.code || "", err.message);
     });
 
+    // ============================================================
+    // ⌨️ لوحة الخانات الثابتة — مثل بوت idbot
+    // request_users (للأشخاص) و request_chat (للمجموعات والقنوات)
+    // موثقة رسمياً في توثيق تيليجرام Bot API
+    // ============================================================
+    const mainKeyboard = {
+      keyboard: [
+        [
+          { text: "👤 User", request_users: { request_id: 1 } },                          // أشخاص عاديين
+          { text: "⭐ Premium", request_users: { request_id: 2, user_is_premium: true } }, // بريميوم فقط
+          { text: "👽 Bot", request_users: { request_id: 3, user_is_bot: true } }          // بوتات فقط
+        ],
+        [
+          { text: "👥 Group", request_chat: { request_id: 4, chat_is_channel: false } },   // مجموعة
+          { text: "📢 Channel", request_chat: { request_id: 5, chat_is_channel: true } },  // قناة
+          { text: "💬 Forum", request_chat: { request_id: 6, chat_is_channel: false, chat_is_forum: true } } // منتدى
+        ],
+        ["🆔 آي دي الخاص بي"]
+      ],
+      resize_keyboard: true,
+      is_persistent: true // الخانات تبقى ظاهرة دائماً ولا تنطفي
+    };
+
+    // تقدير سنة تسجيل حساب تيليجرام من الآي دي (تقريبي — تيليجرام ما يوفر التاريخ الرسمي)
+    function estimateRegistration(id) {
+      const ranges = [
+        [8300000000, "2026"], [7200000000, "2025"], [6300000000, "2024"],
+        [3300000000, "2023"], [1900000000, "2022"], [1200000000, "2021"],
+        [900000000, "2020"], [650000000, "2019"], [450000000, "2018"],
+        [300000000, "2017"], [200000000, "2016"], [100000000, "2015"],
+        [0, "2014 أو أقدم"]
+      ];
+      for (const [limit, year] of ranges) {
+        if (id >= limit) return year;
+      }
+      return "غير معروف";
+    }
+
+    // بطاقة معلومات شخص
+    function userCard(id, name, username) {
+      return `🆔 الآي دي: ${id}\n` +
+        `📝 الاسم: ${name || "—"}\n` +
+        `🔗 اليوزر: ${username ? "@" + username : "لا يوجد"}\n` +
+        `📅 التسجيل (تقريبي): ${estimateRegistration(id)}`;
+    }
+
+    // بطاقة معلومات محادثة (مجموعة/قناة/منتدى)
+    function chatCard(id, title, username, type) {
+      return `🆔 الآي دي: ${id}\n` +
+        `📝 الاسم: ${title || "—"}\n` +
+        `🔗 اليوزر: ${username ? "@" + username : "خاص/لا يوجد"}\n` +
+        `النوع: ${type}`;
+    }
+
     // ---------------------- أمر البدء ----------------------
     bot.onText(/\/start/, (msg) => {
       console.log(`[TG] وصل /start من ${msg.chat.id}`);
-      bot.sendMessage(msg.chat.id, `أهلاً ${msg.from.first_name} 👋\nأرسل لي نصاً أو صورة أو رسالة صوتية وسأرد عليك.`);
+      bot.sendMessage(msg.chat.id,
+        `أهلاً ${msg.from.first_name} 👋\n` +
+        `أرسل نصاً أو صورة أو رسالة صوتية وسأرد عليك.\n` +
+        `واستخدم الخانات تحت لعرض معلومات الآي دي.`,
+        { reply_markup: mainKeyboard }
+      );
     });
 
-    // ---------------------- TEXT ----------------------
+    // ---------------------- معالج الرسائل ----------------------
     bot.on("message", async (msg) => {
       try {
         const chatId = msg.chat.id;
 
-        // تجاهل الأوامر والرسائل غير النصية والصور والصوت
-        if (!msg.text || msg.text.startsWith("/") || msg.photo || msg.voice) return;
+        // ===== 1) نتيجة زر "أشخاص" (users_shared) =====
+        // من التوثيق الرسمي: SharedUser يحتوي فقط user_id و first_name و last_name و username
+        // (لا يوجد is_bot) — نعرف نوع الزر من request_id
+        if (msg.users_shared) {
+          const reqLabel = msg.users_shared.request_id === 3 ? "🤖 البوت المختار"
+            : msg.users_shared.request_id === 2 ? "⭐ حساب بريميوم" : "👤 حساب";
+          for (const su of msg.users_shared.users) {
+            await bot.sendMessage(chatId,
+              `${reqLabel} — المعلومات:\n\n` +
+              userCard(su.user_id, [su.first_name, su.last_name].filter(Boolean).join(" "), su.username));
+          }
+          return;
+        }
+
+        // ===== 2) نتيجة زر "مجموعة/قناة/منتدى" (chat_shared) =====
+        // من التوثيق الرسمي: ChatShared يحتوي فقط request_id و chat_id و title و username
+        // (لا يوجد type) — نعرف نوع المحادثة من request_id
+        if (msg.chat_shared) {
+          const cs = msg.chat_shared;
+          const typeLabel = cs.request_id === 5 ? "📢 قناة" : cs.request_id === 6 ? "💬 منتدى" : "👥 مجموعة";
+          await bot.sendMessage(chatId, chatCard(cs.chat_id, cs.title, cs.username, typeLabel));
+          return;
+        }
+
+        // ===== 3) زر آي دي الخاص =====
+        if (msg.text === "🆔 آي دي الخاص بي") {
+          await bot.sendMessage(chatId, userCard(msg.from.id, msg.from.first_name, msg.from.username));
+          return;
+        }
+
+        // ===== 4) باقي النصوص → الذكاء الاصطناعي =====
+        if (!msg.text || msg.text.startsWith("/")) return;
 
         console.log(`[TG] نص وارد من ${chatId}: ${msg.text.slice(0, 50)}`);
 
@@ -62,7 +148,7 @@ if (!TOKEN) {
       }
     });
 
-    // ---------------------- IMAGE ----------------------
+    // ---------------------- IMAGE (كما هو) ----------------------
     bot.on("photo", async (msg) => {
       const chatId = msg.chat.id;
       let filePath = null;
@@ -82,7 +168,6 @@ if (!TOKEN) {
           }).on("error", reject);
         });
 
-        // التعليق المكتوب مع الصورة يُستخدم كسؤال
         const caption = msg.caption || "صف لي ما في هذه الصورة";
 
         const form = new FormData();
@@ -106,7 +191,7 @@ if (!TOKEN) {
       }
     });
 
-    // ---------------------- AUDIO ----------------------
+    // ---------------------- AUDIO (كما هو) ----------------------
     bot.on("voice", async (msg) => {
       const chatId = msg.chat.id;
       let filePath = null;
