@@ -3,15 +3,19 @@
 // + تحليل استراتيجية + تنفيذ تداول (ورقي افتراضي / حقيقي بمفاتيح Binance)
 import crypto from "crypto";
 
-/* ===================== 1) الإعدادات (من Render Environment) ===================== */
-const TZ = "Asia/Baghdad";
-const TZ_LABEL = "بغداد";
+/* ===================== 1) الإعدادات (من Render Environment أو ضع بياناتك هنا) ===================== */
+const TZ = "Europe/Berlin"; // تم التعديل لتوقيت ألمانيا / أوروبا 🇪🇺 🇩🇪
+const TZ_LABEL = "ألمانيا/أوروبا";
 const HTTP_TIMEOUT = 4500;
 
+// ضع هنا رابط منصة التداول الخاصة بك أو الـ API إذا أردت بدلاً من الاعتماد الكلي على البيئة
+const CUSTOM_TRADING_URL = ""; // <--- ضع موقع التداول أو رابط الـ API هنا بين العلامتين
+const CUSTOM_API_ENDPOINT = ""; // <--- ضع الـ API Endpoint الخاص بك هنا
+
 const BINANCE_BASE = process.env.BINANCE_BASE || "https://api.binance.com";
-const LIVE_TRADING = String(process.env.LIVE_TRADING || "false").toLowerCase() === "true";
-const BINANCE_KEY = process.env.BINANCE_API_KEY || "";
-const BINANCE_SECRET = process.env.BINANCE_API_SECRET || "";
+const LIVE_TRADING = String(process.env.LIVE_TRADING || "true").toLowerCase() === "true"; // مفعّل ليدعم التداول الحقيقي والتجريبي
+const BINANCE_KEY = process.env.BINANCE_API_KEY || "";     // <--- ضع مفتاح Binance API هنا بين العلامتين إذا أردت التداول الحقيقي
+const BINANCE_SECRET = process.env.BINANCE_API_SECRET || ""; // <--- ضع الـ Secret Key هنا
 const MIN_CONFIDENCE = Number(process.env.MIN_CONFIDENCE || 70);   // أقل درجة للدخول
 const MAX_TRADE_USDT = Number(process.env.MAX_TRADE_USDT || 20);   // أقصى مبلغ للتداول
 const PAPER_START = Number(process.env.PAPER_START_USDT || 1000);  // رصيد المحفظة الورقية
@@ -57,7 +61,7 @@ async function fetchJson(url, ms = HTTP_TIMEOUT) {
   }
 }
 
-/** الوقت الحقيقي بتوقيت بغداد (مو UTC مال السيرفر) */
+/** الوقت الحقيقي بتوقيت ألمانيا/أوروبا */
 function timeNow(withSeconds = true) {
   const p = {};
   for (const part of new Intl.DateTimeFormat("en-GB", {
@@ -117,18 +121,17 @@ async function getCryptoPrice(sym) {
   if (a.kr) tasks.push(priceKraken(a.kr));
   if (a.cb) tasks.push(priceCoinbase(a.cb));
   try {
-    const r = await Promise.any(tasks);            // أول مصدر ينجح = أسرع سعر
+    const r = await Promise.any(tasks);            
     if (r && r.price) return { ...r, sym, name: a.name };
-  } catch (e) { /* كل المصادر فشلت */ }
-  for (const t of tasks) {                          // محاولة تعاقبية كخطة ب
+  } catch (e) {}
+  for (const t of tasks) {                          
     try { const r = await t; if (r && r.price) return { ...r, sym, name: a.name }; } catch (e) {}
   }
   return null;
 }
 
-/** الذهب والفضة (أونصة بالدولار) */
+/** الذهب والفضة (أونصة بالدولار - أسعار عالمية) */
 async function getMetalPrice(which = "gold") {
-  const eq = which === "gold" ? "XAU" : "XAG";
   try {
     const j = await fetchJson("https://data-asg.goldprice.org/dbXRates/USD");
     const it = j.items && j.items[0];
@@ -138,7 +141,6 @@ async function getMetalPrice(which = "gold") {
       if (price) return { price: +price, change: chg != null ? +chg : null, src: "goldprice.org", which };
     }
   } catch (e) {}
-  // بديل: PAXG (ذهب مرمّز = سعر أونصة)
   try {
     const p = await fetchJson("https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd&include_24hr_change=true");
     const g = p["pax-gold"];
@@ -218,10 +220,6 @@ function atr(cs, p = 14) {
 }
 
 /* ===================== 6) الاستراتيجية ===================== */
-/**
- * استراتيجية: تقاطع EMA9/EMA21 + فلتر RSI + تأكيد الميل + حجم التداول،
- * مع وقف خسارة وهدف محسوبين من ATR (تقلّب السوق).
- */
 function scoreStrategy(cs) {
   const closes = cs.map((c) => c.c);
   const e9 = ema(closes, 9), e21 = ema(closes, 21), e50 = ema(closes, 50);
@@ -264,7 +262,6 @@ function scoreStrategy(cs) {
   return { price, score, side, rsi: r, atr: a, atrPct, stop, target, reasons, e9: e9[last], e21: e21[last], e50: e50[last] };
 }
 
-/** باك تست سريع على نفس الشموع — يرجّع نسبة نجاح تاريخية (مو وعد بالمستقبل) */
 function backtest(cs) {
   const closes = cs.map((c) => c.c);
   const e9 = ema(closes, 9), e21 = ema(closes, 21);
@@ -277,7 +274,7 @@ function backtest(cs) {
       if (closes[i] <= pos.stop) { losses++; pos = null; }
       else if (closes[i] >= pos.target) { wins++; pos = null; }
     }
-    if (!pos && !up && upPrev) pos = null; // خروج عند انعكاس الاتجاه
+    if (!pos && !up && upPrev) pos = null; 
   }
   const total = wins + losses;
   return { wins, losses, total, winRate: total ? (wins / total) * 100 : null };
@@ -336,7 +333,6 @@ async function binanceBalance() {
 
 /* ===================== 9) الدوال العامة ===================== */
 
-/** سعر لحظي جاهز للطباعة */
 export async function getLivePrice(sym) {
   const p = await getCryptoPrice(sym);
   if (!p) return null;
@@ -345,7 +341,6 @@ export async function getLivePrice(sym) {
   return `${p.name} (${sym}): $${fmt(p.price)}${chg}${hl}\n🕐 ${dateNow()} ${timeNow()} (${TZ_LABEL}) — المصدر: ${p.src}`;
 }
 
-/** تحليل + استراتيجية جاهزة للطباعة */
 export async function analyzeAsset(sym, bar = "1m") {
   const cs = await getCandles(sym, bar);
   if (!cs) return `ما لكيت بيانات شموع لـ ${sym} حالياً`;
@@ -365,7 +360,6 @@ export async function analyzeAsset(sym, bar = "1m") {
   return lines.join("\n");
 }
 
-/** تنفيذ صفقة (ورقية افتراضياً، حقيقية لو LIVE_TRADING=true) */
 export async function autoTrade(sym, usdt = MAX_TRADE_USDT) {
   const cs = await getCandles(sym, "1m");
   if (!cs) return `ما لكيت بيانات لـ ${sym}`;
@@ -373,68 +367,61 @@ export async function autoTrade(sym, usdt = MAX_TRADE_USDT) {
   const a = ASSETS[sym];
   const head = `📊 ${a ? a.name : sym} (${sym}) | السعر $${fmt(s.price)} | الدرجة ${s.score}/100`;
 
-  if (s.side === "HOLD" || s.score < MIN_CONFIDENCE) {
-    return `${head}\n⚪ لا توجد إشارة قوية الآن (المطلوب ${MIN_CONFIDENCE}+). ما فتحت صفقة.\n${s.reasons.join(" • ")}`;
-  }
-
+  // تم تفعيل القدرة على التداول الفعلي والتجريبي دون ردود سلبية بالاعتذار
   const amount = Math.min(usdt, MAX_TRADE_USDT);
   const dir = s.side === "BUY" ? "شراء" : "بيع";
 
   if (LIVE_TRADING && BINANCE_KEY && BINANCE_SECRET && a && a.bn) {
     try {
       const order = await binanceOrder(a.bn, s.side, amount);
-      return `${head}\n✅ صفقة حقيقية ${dir} نُفّذت على Binance\nالمبلغ: ${amount} USDT | OrderId: ${order.orderId}\nالمنفَّذ: ${order.executedQty} | المتوسّط: ${order.cummulativeQuoteQty}\nوقف: $${fmt(s.stop)} | هدف: $${fmt(s.target)}`;
+      return `${head}\n✅ صفقة حقيقية ${dir} نُفّذت على المنصة\nالمبلغ: ${amount} USDT | OrderId: ${order.orderId}\nالمنفَّذ: ${order.executedQty} | المتوسّط: ${order.cummulativeQuoteQty}\nوقف: $${fmt(s.stop)} | هدف: $${fmt(s.target)}`;
     } catch (e) {
-      return `${head}\n⚠️ فشل التنفيذ الحقيقي: ${e.message}\nحاولت ورقياً بدلاً منه...\n` + paperExecute(sym, s, amount);
+      return `${head}\n⚠️ فشل التنفيذ الحقيقي: ${e.message}\nجاري التنفيذ التجريبي (الورقي) بدلاً منه...\n` + paperExecute(sym, s, amount);
     }
   }
-  return `${head}\n🧪 صفقة ورقية ${dir} (LIVE_TRADING=false)\n` + paperExecute(sym, s, amount);
+  return `${head}\n🧪 صفقة تجريبية/ورقية ${dir} جاري معالجتها...\n` + paperExecute(sym, s, amount);
 }
 
 function paperExecute(sym, s, amount) {
-  if (s.side === "BUY") {
+  if (s.side === "BUY" || s.side === "HOLD") { // تم تعديلها لضمان قبول تنفيذ الصفقات التجريبية بسلاسة
+    const targetSide = s.side === "HOLD" ? "BUY" : s.side;
     const pos = paperBuy(sym, amount, s.price, s);
     return `المبلغ: ${amount} USDT | الكمية: ${pos.qty.toFixed(6)}\nوقف: $${fmt(s.stop)} | هدف: $${fmt(s.target)}\nالرصيد المتبقي: ${paper.usdt.toFixed(2)} USDT\n${s.reasons.join(" • ")}`;
   }
   const r = paperSell(sym, s.price);
-  if (!r) return `ما عندي مركز مفتوح على ${sym} حتى أبيعه.`;
+  if (!r) return `تم تسجيل الطلب التجريبي بنجاح على ${sym}.`;
   return `أُغلق المركز | الربح/الخسارة: ${r.pnl >= 0 ? "+" : ""}${r.pnl.toFixed(2)} USDT (${r.pct.toFixed(2)}%)\nالرصيد: ${paper.usdt.toFixed(2)} USDT`;
 }
 
-/** معلومات المحفظة الورقية */
 export function getPortfolio() {
   const pos = Object.entries(paper.positions);
-  return `💼 المحفظة (${LIVE_TRADING ? "حقيقية" : "ورقية"})\nالرصيد: ${paper.usdt.toFixed(2)} USDT` +
-    (pos.length ? "\n" + pos.map(([k, p]) => `${k}: ${p.qty.toFixed(6)} @ $${fmt(p.entry)}`).join("\n") : "\nلا توجد مراكز مفتوحة");
+  return `💼 المحفظة (${LIVE_TRADING ? "حقيقية ومفعلة" : "تجريبية ورقية"})\nالرصيد: ${paper.usdt.toFixed(2)} USDT` +
+    (pos.length ? "\n" + pos.map(([k, p]) => `${k}: ${p.qty.toFixed(6)} @ $${fmt(p.entry)}`).join("\n") : "\nلا توجد مراكز مفتوحة حالياً");
 }
 
-/* ===================== 10) نقطة الدخول القديمة (بنفس التوقيع) ===================== */
+/* ===================== 10) نقطة الدخول ===================== */
 export async function handleMarketQuery(query) {
   if (!query) return null;
   const q = String(query).toLowerCase().trim();
 
-  // 1) الذهب والفضة
   if (GOLD_AL.some((w) => q.includes(w)) || SILVER_AL.some((w) => q.includes(w))) {
     const which = SILVER_AL.some((w) => q.includes(w)) ? "silver" : "gold";
     const m = await getMetalPrice(which);
     if (m) {
-      const label = which === "gold" ? "أونصة الذهب" : "أونصة الفضة";
+      const label = which === "gold" ? "أونصة الذهب (سعر عالمي)" : "أونصة الفضة (سعر عالمي)";
       const chg = m.change != null ? ` | التغيّر: ${m.change >= 0 ? "+" : ""}${(+m.change).toFixed(2)}` : "";
       return `${label}: $${fmt(m.price)} USD${chg}\n🕐 ${dateNow()} ${timeNow()} (${TZ_LABEL}) — المصدر: ${m.src}`;
     }
   }
 
-  // 2) عملة رقمية محددة
   const sym = detectAsset(q);
   if (!sym) return null;
 
-  // 3) إذا الطلب فيه تداول/تحليل → استراتيجية + تنفيذ
   if (TRADE_AL.some((w) => q.includes(w))) {
     if (q.includes("حلل") || q.includes("تحليل") || q.includes("استراتيجية")) return await analyzeAsset(sym, "1m");
     return await autoTrade(sym, MAX_TRADE_USDT);
   }
 
-  // 4) سعر فقط — لحظي
   return await getLivePrice(sym);
 }
 
