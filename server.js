@@ -79,8 +79,11 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
     const hasImage = messages.some(messageHasImage);
     const activeModel = hasImage ? VISION_MODEL : GROQ_MODEL;
 
+    // تعليمات إضافية لدعم الرد باللغة التي يتكلم بها المستخدم (كوردي، عربي، ألماني، إنجليزي)
+    const multilingualSystemInstruction = `${SYSTEM_INSTRUCTION} - Respond in the exact same language or dialect the user speaks (Kurdish, Arabic, German, English, etc.) with a natural, professional tone.`;
+
     const stream = await groq.chat.completions.create({
-      messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, ...messages],
+      messages: [{ role: 'system', content: multilingualSystemInstruction }, ...messages],
       model: activeModel,
       stream: true,
     });
@@ -111,7 +114,10 @@ app.post('/api/text', async (req, res) => {
     }
 
     const completion = await groq.chat.completions.create({
-      messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, { role: 'user', content: text }],
+      messages: [
+        { role: 'system', content: `${SYSTEM_INSTRUCTION} - Reply in the user's language (Kurdish, Arabic, German, English).` },
+        { role: 'user', content: text }
+      ],
       model: GROQ_MODEL,
     });
 
@@ -140,6 +146,8 @@ app.post('/api/audio', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "لا يوجد صوت" });
     const fileName = req.file.originalname || "voice.ogg";
+    
+    // نموذج Whisper سيتعرف تلقائياً على أي لغة (كوردي، عربي، ألماني، إنجليزي)
     const transcription = await groq.audio.transcriptions.create({
       file: new File([req.file.buffer], fileName, { type: req.file.mimetype }),
       model: "whisper-large-v3",
@@ -149,7 +157,10 @@ app.post('/api/audio', upload.single('audio'), async (req, res) => {
     if (liveData) return res.json({ text: liveData });
 
     const completion = await groq.chat.completions.create({
-      messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, { role: 'user', content: userText }],
+      messages: [
+        { role: 'system', content: `${SYSTEM_INSTRUCTION} - Detect the user's spoken language (Kurdish, Arabic, German, English, etc.) and reply in that exact same language/dialect.` },
+        { role: 'user', content: userText }
+      ],
       model: GROQ_MODEL,
     });
     res.json({ text: completion.choices[0]?.message?.content || "..." });
