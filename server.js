@@ -4,8 +4,9 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import Groq from "groq-sdk";
-import { SYSTEM_INSTRUCTION, BOT_NAME, DEVELOPER_NAME, GROQ_MODEL } from "./config.js";
-import { handleMarketQuery } from "./features.js"; // استيراد ملف الوظائف المتغيرة
+import OpenAI from "openai";
+import { SYSTEM_INSTRUCTION, BOT_NAME, GROQ_MODEL } from "./config.js";
+import { handleMarketQuery } from "./features.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +22,7 @@ app.use(express.static(path.join(__dirname, 'Frontend')));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const VISION_MODEL = "qwen/qwen3.8-27b";
 
 function messageHasImage(msg) {
@@ -79,8 +81,7 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
     const hasImage = messages.some(messageHasImage);
     const activeModel = hasImage ? VISION_MODEL : GROQ_MODEL;
 
-    // تعليمات إضافية لدعم الرد باللغة التي يتكلم بها المستخدم (كوردي، عربي، ألماني، إنجليزي)
-    const multilingualSystemInstruction = `${SYSTEM_INSTRUCTION} - Respond in the exact same language or dialect the user speaks (Kurdish, Arabic, German, English, etc.) with a natural, professional tone.`;
+    const multilingualSystemInstruction = `${SYSTEM_INSTRUCTION} - Speak fluently and respond precisely in the language or dialect used by the user (Kurdish, Arabic, German, English).`;
 
     const stream = await groq.chat.completions.create({
       messages: [{ role: 'system', content: multilingualSystemInstruction }, ...messages],
@@ -103,40 +104,23 @@ app.post('/ask/stream', upload.single('image'), async (req, res) => {
   }
 });
 
-app.post('/api/text', async (req, res) => {
+app.post('/api/tts', async (req, res) => {
   try {
-    const text = (req.body && req.body.text) || "";
-    if (!text.trim()) return res.status(400).json({ error: "لا يوجد نص" });
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: "لا يوجد نص لتحويله لصوت" });
 
-    const liveData = await handleMarketQuery(text);
-    if (liveData) {
-      return res.json({ reply: liveData });
-    }
-
-    const completion = await groq.chat.completions.create({
-      messages: [
-        { role: 'system', content: `${SYSTEM_INSTRUCTION} - Reply in the user's language (Kurdish, Arabic, German, English).` },
-        { role: 'user', content: text }
-      ],
-      model: GROQ_MODEL,
+    const mp3Response = await openai.audio.speech.create({
+      model: "tts-1",
+      voice: "alloy",
+      input: text,
     });
 
-    res.json({ reply: completion.choices[0]?.message?.content || "..." });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/image', upload.single('image'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: "لا توجد صورة" });
-    const prompt = req.body.prompt || "صف لي الصورة";
-    const dataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
-    const completion = await groq.chat.completions.create({
-      messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, { role: 'user', content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: dataUrl } }] }],
-      model: VISION_MODEL,
+    const buffer = Buffer.from(await mp3Response.arrayBuffer());
+    res.set({
+      "Content-Type": "audio/mpeg",
+      "Content-Length": buffer.length,
     });
-    res.json({ reply: completion.choices[0]?.message?.content || "..." });
+    res.send(buffer);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -145,25 +129,29 @@ app.post('/api/image', upload.single('image'), async (req, res) => {
 app.post('/api/audio', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "لا يوجد صوت" });
-    const fileName = req.file.originalname || "voice.ogg";
+    const fileName = req.file.originalname || "voice.webm";
     
-    // نموذج Whisper سيتعرف تلقائياً على أي لغة (كوردي، عربي، ألماني، إنجليزي)
     const transcription = await groq.audio.transcriptions.create({
       file: new File([req.file.buffer], fileName, { type: req.file.mimetype }),
       model: "whisper-large-v3",
     });
     const userText = transcription.text || "";
+    
     const liveData = await handleMarketQuery(userText);
-    if (liveData) return res.json({ text: liveData });
+    let replyText = liveData;
 
-    const completion = await groq.chat.completions.create({
-      messages: [
-        { role: 'system', content: `${SYSTEM_INSTRUCTION} - Detect the user's spoken language (Kurdish, Arabic, German, English, etc.) and reply in that exact same language/dialect.` },
-        { role: 'user', content: userText }
-      ],
-      model: GROQ_MODEL,
-    });
-    res.json({ text: completion.choices[0]?.message?.content || "..." });
+    if (!replyText) {
+      const completion = await groq.chat.completions.create({
+        messages: [
+          { role: 'system', content: `${SYSTEM_INSTRUCTION} - Understand the user's language (Kurdish, Arabic, German, English) and reply in the same language.` },
+          { role: 'user', content: userText }
+        ],
+        model: GROQ_MODEL,
+      });
+      replyText = completion.choices[0]?.message?.content || "...";
+    }
+
+    res.json({ text: replyText });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
