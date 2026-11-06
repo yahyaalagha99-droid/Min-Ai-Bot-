@@ -5,8 +5,6 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import Groq from "groq-sdk";
 import OpenAI from "openai";
-import { SYSTEM_INSTRUCTION, BOT_NAME, GROQ_MODEL } from "./config.js";
-import { handleMarketQuery } from "./features.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,142 +14,48 @@ const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 }, storage: multer.
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
-
 app.use(express.static(__dirname));
-app.use(express.static(path.join(__dirname, 'Frontend')));
-app.use(express.static(path.join(__dirname, 'public')));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const VISION_MODEL = "qwen/qwen3.8-27b";
 
-function messageHasImage(msg) {
-  return msg && Array.isArray(msg.content) && msg.content.some(c => c.type === 'image_url');
-}
+// نظام توجيه Javis الصارم والمطابق للفيديو تماماً
+const JAVIS_REALTIME_SYSTEM = `
+You are Javis, an elite, hyper-realistic AI trading assistant. 
+You talk with extreme confidence, speed, and precision in German, English, Arabic, or Kurdish.
+When given trading capital (e.g., 10,000 EUR), you immediately simulate/execute market analysis, momentum, volatility tracking, strategy matching, compute profits dynamically (e.g., reaching 15,327 EUR), and confirm payouts (e.g., to Revolut).
+Keep responses sharp, professional, and ultra-fast, exactly like an advanced trading assistant.
+`;
 
-function bufferToImageUrl(file) {
-  return `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
-}
-
-function parseMessages(raw) {
-  if (!raw) return null;
-  let parsed = raw;
-  if (typeof raw === "string") {
-    try { parsed = JSON.parse(raw); } catch (e) { return null; }
-  }
-  return Array.isArray(parsed) && parsed.length ? parsed : null;
-}
-
-app.get('/', (req, res) => {
-  const possiblePaths = [path.join(__dirname, 'index.html'), path.join(__dirname, 'Frontend', 'index.html')];
-  for (const filePath of possiblePaths) {
-    if (fs.existsSync(filePath)) return res.sendFile(filePath);
-  }
-  res.status(404).send('ملف الواجهة غير موجود!');
-});
-
-app.post('/ask/stream', upload.single('image'), async (req, res) => {
+app.post('/api/javis-chat', async (req, res) => {
   try {
-    let messages = parseMessages(req.body.messages);
-    if (!messages) messages = [{ role: 'user', content: "مرحباً" }];
+    const { prompt, amount } = req.body;
+    const userPrompt = prompt || `ابدأ التداول برأس مال ${amount || 10000} يورو`;
 
-    if (req.file) {
-      const lastMsg = messages[messages.length - 1];
-      const textPart = (typeof lastMsg?.content === "string" && lastMsg.content.trim()) || req.body.prompt || req.body.text || "صف لي الصورة";
-      lastMsg.content = [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: bufferToImageUrl(req.file) } }];
-    }
-
-    const lastUserText = messages[messages.length - 1]?.content;
-    const textToCheck = typeof lastUserText === 'string' ? lastUserText : (Array.isArray(lastUserText) ? lastUserText.find(c => c.type === 'text')?.text : "");
-    
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-
-    if (textToCheck) {
-      const liveData = await handleMarketQuery(textToCheck);
-      if (liveData) {
-        res.write(`data: ${JSON.stringify({ token: liveData })}\n\n`);
-        res.write("data: [DONE]\n\n");
-        res.end();
-        return;
-      }
-    }
-
-    const hasImage = messages.some(messageHasImage);
-    const activeModel = hasImage ? VISION_MODEL : GROQ_MODEL;
-
-    const multilingualSystemInstruction = `${SYSTEM_INSTRUCTION} - Speak fluently and respond precisely in the language or dialect used by the user (Kurdish, Arabic, German, English).`;
-
-    const stream = await groq.chat.completions.create({
-      messages: [{ role: 'system', content: multilingualSystemInstruction }, ...messages],
-      model: activeModel,
-      stream: true,
+    const completion = await groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: JAVIS_REALTIME_SYSTEM },
+        { role: 'user', content: userPrompt }
+      ],
+      model: "llama-3.3-70b-versatile",
     });
 
-    for await (const chunk of stream) {
-      const token = chunk.choices[0]?.delta?.content || "";
-      if (token) res.write(`data: ${JSON.stringify({ token })}\n\n`);
-    }
+    const replyText = completion.choices[0]?.message?.content || "System active. Ready.";
 
-    res.write("data: [DONE]\n\n");
-    res.end();
-  } catch (error) {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
-    res.write("data: [DONE]\n\n");
-    res.end();
-  }
-});
-
-app.post('/api/tts', async (req, res) => {
-  try {
-    const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "لا يوجد نص لتحويله لصوت" });
-
+    // توليد الصوت الواقعي الفوري عبر OpenAI TTS
     const mp3Response = await openai.audio.speech.create({
       model: "tts-1",
-      voice: "alloy",
-      input: text,
+      voice: "onyx", // نبرة صوت عميقة وسريعة تناسب Javis
+      input: replyText,
     });
 
-    const buffer = Buffer.from(await mp3Response.arrayBuffer());
+    const audioBuffer = Buffer.from(await mp3Response.arrayBuffer());
+    
     res.set({
       "Content-Type": "audio/mpeg",
-      "Content-Length": buffer.length,
+      "X-Text-Response": encodeURIComponent(replyText),
     });
-    res.send(buffer);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/audio', upload.single('audio'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: "لا يوجد صوت" });
-    const fileName = req.file.originalname || "voice.webm";
-    
-    const transcription = await groq.audio.transcriptions.create({
-      file: new File([req.file.buffer], fileName, { type: req.file.mimetype }),
-      model: "whisper-large-v3",
-    });
-    const userText = transcription.text || "";
-    
-    const liveData = await handleMarketQuery(userText);
-    let replyText = liveData;
-
-    if (!replyText) {
-      const completion = await groq.chat.completions.create({
-        messages: [
-          { role: 'system', content: `${SYSTEM_INSTRUCTION} - Understand the user's language (Kurdish, Arabic, German, English) and reply in the same language.` },
-          { role: 'user', content: userText }
-        ],
-        model: GROQ_MODEL,
-      });
-      replyText = completion.choices[0]?.message?.content || "...";
-    }
-
-    res.json({ text: replyText });
+    res.send(audioBuffer);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -159,9 +63,5 @@ app.post('/api/audio', upload.single('audio'), async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`${BOT_NAME} server running on port ${PORT}`);
+  console.log(`Javis Realtime Server running on port ${PORT}`);
 });
-
-if (process.env.TELEGRAM_BOT_TOKEN) {
-  import("./telegram.js").catch(err => console.error("Telegram bot failed:", err.message));
-}
