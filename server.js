@@ -1,10 +1,11 @@
-import express from "express";
+Import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import Groq from "groq-sdk";
-import OpenAI from "openai";
+import { SYSTEM_INSTRUCTION, BOT_NAME, DEVELOPER_NAME, GROQ_MODEL } from "./config.js";
+import { handleMarketQuery } from "./features.js"; // استيراد ملف الوظائف المتغيرة
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,197 +15,144 @@ const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 }, storage: multer.
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
 app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, 'Frontend')));
+app.use(express.static(path.join(__dirname, 'public')));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const VISION_MODEL = "qwen/qwen3.8-27b";
 
-const JAVIS_REALTIME_SYSTEM = `
-You are JARVIS, an elite, hyper-realistic AI trading assistant. 
-You talk with extreme confidence, speed, and precision in German, English, Arabic, or Kurdish.
-Analyze market momentum, volatility, execute trading strategies, and compute profits dynamically according to the user's specific commands.
-`;
+function messageHasImage(msg) {
+  return msg && Array.isArray(msg.content) && msg.content.some(c => c.type === 'image_url');
+}
+
+function bufferToImageUrl(file) {
+  return `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
+}
+
+function parseMessages(raw) {
+  if (!raw) return null;
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try { parsed = JSON.parse(raw); } catch (e) { return null; }
+  }
+  return Array.isArray(parsed) && parsed.length ? parsed : null;
+}
 
 app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="ar" dir="rtl">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>JARVIS</title>
-        <style>
-            body {
-                background-color: #05050a;
-                color: #ffffff;
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                height: 100vh;
-                margin: 0;
-                overflow: hidden;
-            }
-            h1 {
-                letter-spacing: 5px;
-                margin-bottom: 5px;
-                font-weight: 300;
-                color: #94a3b8;
-                font-size: 28px;
-            }
-            .orb-container {
-                position: relative;
-                width: 220px;
-                height: 220px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin: 20px 0;
-            }
-            .orb {
-                width: 150px;
-                height: 150px;
-                background: radial-gradient(circle, #ff1a1a 0%, #990000 60%, #330000 100%);
-                border-radius: 50%;
-                box-shadow: 0 0 50px #ff0000, 0 0 100px #ff1a1a;
-                animation: pulse 2s infinite ease-in-out;
-            }
-            .orb.active {
-                animation: speak 0.6s infinite alternate ease-in-out;
-            }
-            @keyframes pulse {
-                0% { transform: scale(0.95); box-shadow: 0 0 30px #ff0000; }
-                50% { transform: scale(1.05); box-shadow: 0 0 70px #ff3333; }
-                100% { transform: scale(0.95); box-shadow: 0 0 30px #ff0000; }
-            }
-            @keyframes speak {
-                0% { transform: scale(0.9); box-shadow: 0 0 40px #ff0000; }
-                100% { transform: scale(1.2); box-shadow: 0 0 90px #ff6666; }
-            }
-            .input-box {
-                background: #0f172a;
-                border: 1px solid #334155;
-                color: #fff;
-                padding: 12px 20px;
-                border-radius: 25px;
-                width: 80%;
-                max-width: 350px;
-                font-size: 16px;
-                outline: none;
-                text-align: center;
-                margin-bottom: 15px;
-            }
-            .input-box:focus {
-                border-color: #ff1a1a;
-                box-shadow: 0 0 10px rgba(255,26,26,0.4);
-            }
-            .btn {
-                background: linear-gradient(135deg, #1e293b, #0f172a);
-                color: #e2e8f0;
-                border: 1px solid #334155;
-                padding: 12px 25px;
-                font-size: 16px;
-                border-radius: 25px;
-                cursor: pointer;
-                transition: all 0.3s ease;
-            }
-            .btn:hover {
-                border-color: #ff1a1a;
-                box-shadow: 0 0 15px rgba(255,26,26,0.4);
-            }
-            #status {
-                margin-top: 20px;
-                font-size: 15px;
-                color: #38bdf8;
-                height: 40px;
-                text-align: center;
-                padding: 0 20px;
-                max-width: 400px;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>JARVIS</h1>
-        <div class="orb-container">
-            <div class="orb" id="orb"></div>
-        </div>
-        <input type="text" id="userPrompt" class="input-box" placeholder="اكتب أمر التداول أو رأس المال هنا..." value="ابدأ التداول برأس مال 10000 يورو">
-        <button class="btn" onclick="startJavis()">تنفيذ الأمر</button>
-        <div id="status">JARVIS جاهز للعمليات</div>
-
-        <script>
-            async function startJavis() {
-                const orb = document.getElementById('orb');
-                const status = document.getElementById('status');
-                const promptText = document.getElementById('userPrompt').value;
-                
-                status.innerText = "جاري معالجة الأمر والتحليل...";
-                orb.classList.add('active');
-
-                try {
-                    const response = await fetch('/api/javis-chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt: promptText })
-                    });
-
-                    const data = await response.json();
-                    
-                    if (!response.ok) {
-                        throw new Error(data.error || "خطأ في السيرفر");
-                    }
-
-                    status.innerText = data.reply;
-
-                    if (data.audio) {
-                        const audio = new Audio("data:audio/mp3;base64," + data.audio);
-                        audio.play().catch(e => console.log("Audio play error:", e));
-                        audio.onended = () => {
-                            orb.classList.remove('active');
-                        };
-                    } else {
-                        orb.classList.remove('active');
-                    }
-                } catch (err) {
-                    status.innerText = "خطأ: " + err.message;
-                    orb.classList.remove('active');
-                }
-            }
-        </script>
-    </body>
-    </html>
-  `);
+  const possiblePaths = [path.join(__dirname, 'index.html'), path.join(__dirname, 'Frontend', 'index.html')];
+  for (const filePath of possiblePaths) {
+    if (fs.existsSync(filePath)) return res.sendFile(filePath);
+  }
+  res.status(404).send('ملف الواجهة غير موجود!');
 });
 
-app.post('/api/javis-chat', async (req, res) => {
+app.post('/ask/stream', upload.single('image'), async (req, res) => {
   try {
-    const { prompt } = req.body;
-    const userPrompt = prompt || "ابدأ التداول";
+    let messages = parseMessages(req.body.messages);
+    if (!messages) messages = [{ role: 'user', content: "مرحباً" }];
+
+    if (req.file) {
+      const lastMsg = messages[messages.length - 1];
+      const textPart = (typeof lastMsg?.content === "string" && lastMsg.content.trim()) || req.body.prompt || req.body.text || "صف لي الصورة";
+      lastMsg.content = [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: bufferToImageUrl(req.file) } }];
+    }
+
+    const lastUserText = messages[messages.length - 1]?.content;
+    const textToCheck = typeof lastUserText === 'string' ? lastUserText : (Array.isArray(lastUserText) ? lastUserText.find(c => c.type === 'text')?.text : "");
+    
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    if (textToCheck) {
+      const liveData = await handleMarketQuery(textToCheck);
+      if (liveData) {
+        res.write(`data: ${JSON.stringify({ token: liveData })}\n\n`);
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+      }
+    }
+
+    const hasImage = messages.some(messageHasImage);
+    const activeModel = hasImage ? VISION_MODEL : GROQ_MODEL;
+
+    const stream = await groq.chat.completions.create({
+      messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, ...messages],
+      model: activeModel,
+      stream: true,
+    });
+
+    for await (const chunk of stream) {
+      const token = chunk.choices[0]?.delta?.content || "";
+      if (token) res.write(`data: ${JSON.stringify({ token })}\n\n`);
+    }
+
+    res.write("data: [DONE]\n\n");
+    res.end();
+  } catch (error) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+  }
+});
+
+app.post('/api/text', async (req, res) => {
+  try {
+    const text = (req.body && req.body.text) || "";
+    if (!text.trim()) return res.status(400).json({ error: "لا يوجد نص" });
+
+    const liveData = await handleMarketQuery(text);
+    if (liveData) {
+      return res.json({ reply: liveData });
+    }
 
     const completion = await groq.chat.completions.create({
-      messages: [
-        { role: 'system', content: JAVIS_REALTIME_SYSTEM },
-        { role: 'user', content: userPrompt }
-      ],
-      model: "llama-3.3-70b-versatile",
+      messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, { role: 'user', content: text }],
+      model: GROQ_MODEL,
     });
 
-    const replyText = completion.choices[0]?.message?.content || "System active.";
+    res.json({ reply: completion.choices[0]?.message?.content || "..." });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-    const mp3Response = await openai.audio.speech.create({
-      model: "tts-1",
-      voice: "onyx",
-      input: replyText,
+app.post('/api/image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "لا توجد صورة" });
+    const prompt = req.body.prompt || "صف لي الصورة";
+    const dataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, { role: 'user', content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: dataUrl } }] }],
+      model: VISION_MODEL,
     });
+    res.json({ reply: completion.choices[0]?.message?.content || "..." });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-    const audioBuffer = Buffer.from(await mp3Response.arrayBuffer());
-    const base64Audio = audioBuffer.toString("base64");
-
-    res.json({
-      reply: replyText,
-      audio: base64Audio
+app.post('/api/audio', upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "لا يوجد صوت" });
+    const fileName = req.file.originalname || "voice.ogg";
+    const transcription = await groq.audio.transcriptions.create({
+      file: new File([req.file.buffer], fileName, { type: req.file.mimetype }),
+      model: "whisper-large-v3",
     });
+    const userText = transcription.text || "";
+    const liveData = await handleMarketQuery(userText);
+    if (liveData) return res.json({ text: liveData });
+
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, { role: 'user', content: userText }],
+      model: GROQ_MODEL,
+    });
+    res.json({ text: completion.choices[0]?.message?.content || "..." });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -212,5 +160,9 @@ app.post('/api/javis-chat', async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`JARVIS Server running on port ${PORT}`);
+  console.log(`${BOT_NAME} server running on port ${PORT}`);
 });
+
+if (process.env.TELEGRAM_BOT_TOKEN) {
+  import("./telegram.js").catch(err => console.error("Telegram bot failed:", err.message));
+}
