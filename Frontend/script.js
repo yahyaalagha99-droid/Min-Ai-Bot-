@@ -24,7 +24,12 @@ let sending = false;
 
 let voiceReplies = localStorage.getItem("voiceReplies") !== "off";
 let talkMode = false;          // محادثة صوتية مستمرة
+let lastVoiceLang = null;      // لغة آخر كلام صوتي (من Whisper)
 let cachedContext = null;      // الموقع والتوقيت (نطلبه مرة وحدة)
+
+// 🎛 طابع جارفس: فلتر + كورس خفيف على صوت البوت، وأصوات "بيب" إلكترونية
+const JARVIS_FX = true;
+const JARVIS_BEEPS = true;
 let cachedContextTime = 0;
 
 // =====================================================
@@ -191,6 +196,9 @@ const Speaker = {
     this.useBrowserVoice = false; // نجرب Groq من جديد مع كل رد
     this.inputDone = false;
     this.totalChars = 0;
+    this.replyLang = null;   // لغة الرد (نثبتها من أول قطعة)
+    this.context = "";
+    this.beeped = false;
   },
 
   enqueue(text) {
@@ -256,6 +264,12 @@ const Speaker = {
       setOrbState("speaking");
       setStatus("يتكلّم...");
 
+      if (!this.beeped) {
+        this.beeped = true;
+        await jarvisBeep("speak");
+        if (gen !== this.generation) return;
+      }
+
       let played = false;
 
       if (!this.useBrowserVoice) {
@@ -269,12 +283,13 @@ const Speaker = {
           }
         } catch (error) {
           console.warn("TTS fallback:", error.message);
+          if (error.lang && !this.replyLang) this.replyLang = error.lang;
           if (error.permanent) this.useBrowserVoice = true;
         }
       }
 
       if (!played && gen === this.generation) {
-        await speakWithBrowser(item.text);
+        await speakWithBrowser(item.text, this.replyLang || lastVoiceLang);
       }
     }
 
@@ -293,7 +308,7 @@ const Speaker = {
 
       if (!ctx) {
         // متصفح قديم: نشغّل بعنصر audio عادي
-        const url = URL.createObjectURL(new Blob([arrayBuffer], { type: "audio/wav" }));
+        const url = URL.createObjectURL(new Blob([arrayBuffer]));
         const audio = new Audio(url);
         audio.onended = audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
         audio.play().catch(resolve);
@@ -317,7 +332,8 @@ const Speaker = {
       const data = new Uint8Array(analyser.fftSize);
 
       source.buffer = decoded;
-      source.connect(analyser);
+      const fxOut = JARVIS_FX ? buildJarvisChain(ctx, source) : source;
+      fxOut.connect(analyser);
       analyser.connect(ctx.destination);
       this.source = source;
 
@@ -396,12 +412,21 @@ async function fetchTTS(text) {
   const response = await fetch("/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text })
+    // نرسل لغة الرد (أو لغة كلامك) حتى السيرفر يختار الصوت الصحيح
+    body: JSON.stringify({
+      text,
+      context: Speaker.context || "",
+      lang: Speaker.replyLang || lastVoiceLang
+    })
   });
+
+  const detected = response.headers.get("X-TTS-Lang");
+  if (detected && !Speaker.replyLang) Speaker.replyLang = detected;
 
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     const error = new Error(data.error || `TTS ${response.status}`);
+    error.lang = data.lang;
 
     // لغة غير مدعومة = نستخدم صوت المتصفح لهذي القطعة بس
     // أي خطأ ثاني (مفتاح/شروط/حد الاستخدام) = نتحول لصوت المتصفح للباقي
@@ -413,17 +438,153 @@ async function fetchTTS(text) {
   return response.arrayBuffer();
 }
 
-function speakWithBrowser(text) {
+// =====================================================
+// 🎛 مؤثرات جارفس
+// قطع الترددات الواطية (حدّة إلكترونية) + تقوية الوضوح + كورس خفيف
+// =====================================================
+function buildJarvisChain(ctx, source) {
+  const highpass = ctx.createBiquadFilter();
+  highpass.type = "highpass";
+  highpass.frequency.value = 200;
+  highpass.Q.value = 0.7;
+
+  const presence = ctx.createBiquadFilter();
+  presence.type = "peaking";
+  presence.frequency.value = 4500;
+  presence.Q.value = 0.8;
+  presence.gain.value = 4;
+
+  const air = ctx.createBiquadFilter();
+  air.type = "highshelf";
+  air.frequency.value = 6000;
+  air.gain.value = 2.5;
+
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -20;
+  comp.ratio.value = 3;
+  comp.attack.value = 0.005;
+  comp.release.value = 0.15;
+
+  // كورس مزدوج: نسختين متأخرتين شوية ومتموّجتين تنخلط مع الأصل → لمعة "هولوغرام"
+  const dry = ctx.createGain();
+  dry.gain.value = 0.8;
+
+  // ستيريو: الأصل بالنص، ونسخة الكورس الأولى يسار والثانية يمين → صوت أعرض
+  const out = ctx.createChannelMerger(2);
+  const lfos = [];
+
+  source.connect(highpass);
+  highpass.connect(presence);
+  presence.connect(air);
+  air.connect(comp);
+  comp.connect(dry);
+  dry.connect(out, 0, 0);
+  dry.connect(out, 0, 1);
+
+  [[0.011, 0.8, 0.0018, 0.38, 0], [0.007, 1.1, 0.0015, 0.32, 1]].forEach(([time, rate, depth, mix, channel]) => {
+    const delay = ctx.createDelay(0.05);
+    delay.delayTime.value = time;
+
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = rate;
+    const lfoDepth = ctx.createGain();
+    lfoDepth.gain.value = depth;
+    lfo.connect(lfoDepth);
+    lfoDepth.connect(delay.delayTime);
+    lfo.start();
+    lfos.push(lfo);
+
+    const wet = ctx.createGain();
+    wet.gain.value = mix;
+
+    comp.connect(delay);
+    delay.connect(wet);
+    wet.connect(out, 0, channel);
+  });
+
+  // صدى غرفة خفيف جداً → عمق "رقمي"
+  const reverb = ctx.createConvolver();
+  reverb.buffer = getRoomImpulse(ctx);
+  const reverbMix = ctx.createGain();
+  reverbMix.gain.value = 0.14;
+  comp.connect(reverb);
+  reverb.connect(reverbMix);
+  reverbMix.connect(out, 0, 0);
+  reverbMix.connect(out, 0, 1);
+
+  source.addEventListener("ended", () => {
+    lfos.forEach(l => { try { l.stop(); } catch {} });
+  });
+
+  return out;
+}
+
+let roomImpulse = null;
+
+function getRoomImpulse(ctx) {
+  if (roomImpulse && roomImpulse.sampleRate === ctx.sampleRate) return roomImpulse;
+
+  const length = Math.floor(ctx.sampleRate * 0.45);
+  roomImpulse = ctx.createBuffer(2, length, ctx.sampleRate);
+
+  for (let ch = 0; ch < 2; ch++) {
+    const data = roomImpulse.getChannelData(ch);
+    for (let i = 0; i < length; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 3);
+    }
+  }
+
+  return roomImpulse;
+}
+
+// "بيب" إلكتروني قصير (مثل الفيديو) — listen: نغمتين صاعدة، speak: نغمة ناعمة
+function jarvisBeep(kind = "listen") {
+  return new Promise((resolve) => {
+    const ctx = JARVIS_BEEPS ? getAudioCtx() : null;
+    if (!ctx) return resolve();
+
+    const tones = kind === "listen" ? [[880, 0], [1320, 0.09]] : [[1200, 0], [1800, 0.06]];
+    const now = ctx.currentTime;
+
+    tones.forEach(([freq, at]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + at);
+      gain.gain.exponentialRampToValueAtTime(0.06, now + at + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.08);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + at);
+      osc.stop(now + at + 0.1);
+    });
+
+    setTimeout(resolve, 200);
+  });
+}
+
+// صوت المتصفح (احتياطي): نختار صوت بنفس اللغة إذا موجود بالجهاز
+const BROWSER_LANGS = {
+  ar: "ar-SA", ckb: "fa-IR", kmr: "tr-TR", ku: "tr-TR", de: "de-DE", en: "en-US",
+  fr: "fr-FR", es: "es-ES", it: "it-IT", tr: "tr-TR", fa: "fa-IR", ru: "ru-RU",
+  nl: "nl-NL", pt: "pt-BR", zh: "zh-CN", ja: "ja-JP", ko: "ko-KR", hi: "hi-IN"
+};
+
+function speakWithBrowser(text, lang) {
   return new Promise((resolve) => {
     if (!("speechSynthesis" in window)) return resolve();
 
     const utter = new SpeechSynthesisUtterance(text);
-    const isArabic = /[؀-ۿ]/.test(text);
-    utter.lang = isArabic ? "ar-SA" : "en-US";
+    const code = lang || (/[\u0600-\u06FF]/.test(text) ? "ar" : "en");
+    const bcp = BROWSER_LANGS[code] || code;
+    utter.lang = bcp;
 
-    const voice = speechSynthesis
-      .getVoices()
-      .find(v => v.lang?.toLowerCase().startsWith(isArabic ? "ar" : "en"));
+    const voices = speechSynthesis.getVoices();
+    const base = bcp.split("-")[0].toLowerCase();
+    const voice =
+      voices.find(v => v.lang?.toLowerCase().startsWith(base) && /female|woman|zira|aria|katja|hedda|samantha|anna/i.test(v.name)) ||
+      voices.find(v => v.lang?.toLowerCase().startsWith(base));
     if (voice) utter.voice = voice;
 
     // نبض بسيط للدائرة لأن صوت المتصفح ما يعطينا مستوى الصوت
@@ -448,6 +609,7 @@ async function sendMessage(event, options = {}) {
   if (event) event.preventDefault();
 
   const fromVoice = options.fromVoice === true;
+  if (!fromVoice) lastVoiceLang = null; // رسالة مكتوبة → السيرفر يكشف اللغة من الرد نفسه
   const text = (options.text ?? input.value).trim();
 
   if ((!text && !selectedImageBase64) || sending) return;
@@ -499,6 +661,7 @@ async function sendMessage(event, options = {}) {
   // نرسل الجمل الكاملة للصوت أول بأول (حتى يبدأ يتكلم قبل ما يخلص الرد)
   const feedSpeaker = (final = false) => {
     if (!speak) return;
+    Speaker.context = reply.slice(0, 400); // عيّنة من الرد حتى السيرفر يعرف لغته بدقة
 
     const pending = reply.slice(spokenUpTo);
     if (!pending) return;
@@ -650,17 +813,23 @@ const Recorder = {
   },
 
   async start() {
-    if (this.active || sending) return;
+    if (this.active || this.starting || sending) return;
+    this.starting = true;
 
     Speaker.stop();
     const ctx = getAudioCtx();
 
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      // نطلب المايك فوراً (مهم للآيفون) والبيب يشتغل بنفس الوقت،
+      // وكشف السكوت يبدأ بعد البيب حتى ما ينحسب كضوضاء
+      const streamPromise = navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
+      await jarvisBeep("listen");
+      this.stream = await streamPromise;
     } catch (error) {
       console.error(error);
+      this.starting = false;
       alert("لم أتمكن من الوصول إلى الميكروفون. تحقق من إذن استخدامه.");
       setTalkMode(false);
       return;
@@ -680,6 +849,7 @@ const Recorder = {
     this.mediaRecorder.start(250);
 
     this.active = true;
+    this.starting = false;
     micBtn?.classList.add("recording");
     setOrbState("listening");
     setStatus("أستمع إليك...");
@@ -777,6 +947,7 @@ const Recorder = {
       if (!response.ok) throw new Error(data.error || "STT " + response.status);
 
       const text = cleanTranscript(data.text);
+      lastVoiceLang = data.language || null;
       setOrbState(null);
 
       if (!text) {
