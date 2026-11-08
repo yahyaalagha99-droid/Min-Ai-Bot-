@@ -17,7 +17,7 @@ const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "openai/gpt-oss-20b";
 
 const CACHE_TTL = 600 * 1000;
-const HTTP_TIMEOUT = 8000;
+const HTTP_TIMEOUT = 20000;
 
 app.use(express.static(__dirname));
 app.use(express.static(path.join(__dirname, "Frontend")));
@@ -85,6 +85,7 @@ function detectLang(text) {
 
 function validTimezone(value) {
   if (typeof value !== "string" || value.length > 80) return "UTC";
+
   try {
     new Intl.DateTimeFormat("en", { timeZone: value });
     return value;
@@ -102,19 +103,32 @@ function validLocation(value) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
 
-  return { latitude: lat, longitude: lon };
+  return {
+    latitude: lat,
+    longitude: lon
+  };
 }
 
-function fetchJson(url) {
+async function fetchJson(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT);
 
-  return fetch(url, { signal: controller.signal })
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.json();
-    })
-    .finally(() => clearTimeout(timer));
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "Accept": "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Weather service HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function nowParts(timezone = "UTC") {
@@ -178,6 +192,7 @@ function extractCity(text) {
 
   for (const pattern of patterns) {
     const match = t.match(pattern);
+
     if (match) {
       return match[1]
         .replace(/[؟?!.,،؛]/g, "")
@@ -199,7 +214,10 @@ async function getWeather(city, location, timezone, lang) {
     : `${norm(city)}|${lang}`;
 
   const cached = cityCache.get(cacheKey);
-  if (cached && Date.now() - cached.time < CACHE_TTL) return cached.value;
+
+  if (cached && Date.now() - cached.time < CACHE_TTL) {
+    return cached.value;
+  }
 
   try {
     let latitude;
@@ -215,10 +233,12 @@ async function getWeather(city, location, timezone, lang) {
           : "اسمح للبوت باستخدام موقع جهازك، أو اكتب اسم مدينتك حتى أعطيك الطقس الصحيح.";
       }
 
-      const geo = await fetchJson(
-        `https://geocoding-api.open-meteo.com/v1/search?count=1&language=${isEnglish ? "en" : "ar"}&name=${encodeURIComponent(city)}`
-      );
+      const geoUrl =
+        "https://geocoding-api.open-meteo.com/v1/search" +
+        `?count=1&language=${isEnglish ? "en" : "ar"}` +
+        `&name=${encodeURIComponent(city)}`;
 
+      const geo = await fetchJson(geoUrl);
       const result = geo.results?.[0];
 
       if (!result) {
@@ -231,24 +251,39 @@ async function getWeather(city, location, timezone, lang) {
       longitude = result.longitude;
     }
 
-    const weather = await fetchJson(
+    const weatherUrl =
       `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
       "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code" +
-      "&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1"
-    );
+      "&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1";
 
-    const current = weather.current || {};
+    const weather = await fetchJson(weatherUrl);
+
+    if (!weather.current) {
+      throw new Error("Weather response has no current data");
+    }
+
+    const current = weather.current;
     const daily = weather.daily || {};
-    const description = WMO[current.weather_code]?.[isEnglish ? 1 : 0] || "غير معروف";
+
+    const description =
+      WMO[current.weather_code]?.[isEnglish ? 1 : 0] || "غير معروف";
+
     const place = city || label;
 
     const result = isEnglish
       ? `Weather in ${place}: ${description}\nTemperature: ${current.temperature_2m}°C (feels like ${current.apparent_temperature}°C)\nHumidity: ${current.relative_humidity_2m}%\nWind: ${current.wind_speed_10m} km/h\nToday's range: ${daily.temperature_2m_min?.[0]}° to ${daily.temperature_2m_max?.[0]}°C`
       : `🌤️ الطقس في ${place}: ${description}\n• الحرارة الآن: ${current.temperature_2m}° مئوية\n• المحسوسة: ${current.apparent_temperature}°\n• الرطوبة: ${current.relative_humidity_2m}%\n• سرعة الرياح: ${current.wind_speed_10m} كم/س\n• حرارة اليوم: من ${daily.temperature_2m_min?.[0]}° إلى ${daily.temperature_2m_max?.[0]}°`;
 
-    cityCache.set(cacheKey, { value: result, time: Date.now() });
+    cityCache.set(cacheKey, {
+      value: result,
+      time: Date.now()
+    });
+
     return result;
+
   } catch (error) {
+    console.error("WEATHER ERROR:", error);
+
     return isEnglish
       ? "I couldn't retrieve the weather right now. Please try again."
       : "تعذّر جلب الطقس حالياً. حاول مرة ثانية.";
@@ -287,7 +322,6 @@ function isIdentityQuestion(text) {
   return [
     "منو صانعك",
     "من صنعك",
-    "من صنعك؟",
     "منو مطورك",
     "من طورك",
     "من عملك",
@@ -301,13 +335,13 @@ function isIdentityQuestion(text) {
 
 function isQuickCommand(text) {
   const t = String(text || "").trim();
+
   if (!t) return false;
   if (isIdentityQuestion(t)) return true;
 
-  const n = norm(t);
-  return containsWord(n, WEATHER_WORDS) ||
-    containsWord(n, TIME_WORDS) ||
-    containsWord(n, DATE_WORDS);
+  return containsWord(t, WEATHER_WORDS) ||
+    containsWord(t, TIME_WORDS) ||
+    containsWord(t, DATE_WORDS);
 }
 
 async function handleQuickCommand(text, location, timezone) {
@@ -375,9 +409,15 @@ function sendSSE(res, value) {
   res.write(`data: ${JSON.stringify(value)}\n\n`);
 }
 
+function sendDone(res) {
+  res.write("data: [DONE]\n\n");
+}
+
 app.post("/ask/stream", async (req, res) => {
   if (!API_KEY) {
-    return res.status(500).json({ error: "GROQ_API_KEY not set in Render" });
+    return res.status(500).json({
+      error: "GROQ_API_KEY not set in Render"
+    });
   }
 
   const messages = cleanMessages(req.body?.messages);
@@ -395,16 +435,20 @@ app.post("/ask/stream", async (req, res) => {
 
   if (isIdentityQuestion(lastUserText)) {
     sendSSE(res, { token: DEVELOPER_NAME });
-    sendSSE(res, "[DONE]");
+    sendDone(res);
     return res.end();
   }
 
   if (isQuickCommand(lastUserText)) {
-    const quick = await handleQuickCommand(lastUserText, location, timezone);
+    const quick = await handleQuickCommand(
+      lastUserText,
+      location,
+      timezone
+    );
 
     if (quick) {
       sendSSE(res, { token: quick });
-      sendSSE(res, "[DONE]");
+      sendDone(res);
       return res.end();
     }
   }
@@ -418,18 +462,6 @@ app.post("/ask/stream", async (req, res) => {
     `If asked who created or developed you, answer with exactly: ${DEVELOPER_NAME}`,
     "Do not mention the developer unless asked."
   ];
-
-  if (hasWeatherWord(lastUserText)) {
-    const city = extractCity(lastUserText);
-
-    if (city) {
-      live.push("Current weather: " + await getWeather(city, null, timezone, detectLang(lastUserText)));
-    } else if (location) {
-      live.push("Current weather: " + await getWeather(null, location, timezone, detectLang(lastUserText)));
-    } else {
-      live.push("The user's location is not available. Ask them for permission to access location or ask which city they mean. Never assume Baghdad.");
-    }
-  }
 
   const systemPrompt = `You are ${APP_NAME}, a helpful and intelligent AI assistant.
 
@@ -469,17 +501,23 @@ ${live.join("\n")}`;
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      sendSSE(res, { error: `API Error ${response.status}: ${errorText.slice(0, 200)}` });
-      sendSSE(res, "[DONE]");
+
+      sendSSE(res, {
+        error: `API Error ${response.status}: ${errorText.slice(0, 200)}`
+      });
+
+      sendDone(res);
       return res.end();
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+
     let buffer = "";
 
     while (true) {
       const { done, value } = await reader.read();
+
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -493,25 +531,36 @@ ${live.join("\n")}`;
         if (!trimmed.startsWith("data:")) continue;
 
         const payload = trimmed.slice(5).trim();
+
         if (payload === "[DONE]") continue;
 
         try {
           const parsed = JSON.parse(payload);
           const token = parsed?.choices?.[0]?.delta?.content || "";
 
-          if (token) sendSSE(res, { token });
+          if (token) {
+            sendSSE(res, { token });
+          }
         } catch {
-          // تجاهل أجزاء البيانات غير المكتملة
+          // تجاهل البيانات غير المكتملة
         }
       }
     }
 
-    sendSSE(res, "[DONE]");
+    sendDone(res);
     res.end();
+
   } catch (error) {
-    sendSSE(res, { error: error.message });
-    sendSSE(res, "[DONE]");
-    res.end();
+    console.error("CHAT API ERROR:", error);
+
+    if (!res.writableEnded) {
+      sendSSE(res, {
+        error: "حدث خطأ أثناء الاتصال بخدمة الذكاء الاصطناعي."
+      });
+
+      sendDone(res);
+      res.end();
+    }
   }
 });
 
