@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -24,10 +25,11 @@ const HTTP_TIMEOUT = 20000;
 const GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 const GROQ_TTS_URL = "https://api.groq.com/openai/v1/audio/speech";
 const STT_MODEL = process.env.STT_MODEL || "whisper-large-v3-turbo";
-const TTS_MODEL_AR = process.env.TTS_MODEL_AR || "canopylabs/orpheus-arabic-saudi";
-const TTS_MODEL_EN = process.env.TTS_MODEL_EN || "canopylabs/orpheus-v1-english";
-const TTS_VOICE_AR = process.env.TTS_VOICE_AR || "lulwa";   // abdullah, fahad, sultan, lulwa, noura, aisha
-const TTS_VOICE_EN = process.env.TTS_VOICE_EN || "hannah";  // autumn, diana, hannah, austin, daniel, troy
+const TTS_ENGINE = (process.env.TTS_ENGINE || "edge").toLowerCase(); // edge (كل اللغات) أو groq
+const GROQ_TTS_MODEL_AR = process.env.GROQ_TTS_MODEL_AR || "canopylabs/orpheus-arabic-saudi";
+const GROQ_TTS_MODEL_EN = process.env.GROQ_TTS_MODEL_EN || "canopylabs/orpheus-v1-english";
+const GROQ_VOICE_AR = process.env.GROQ_VOICE_AR || "noura";  // abdullah, fahad, sultan, lulwa, noura, aisha
+const GROQ_VOICE_EN = process.env.GROQ_VOICE_EN || "diana";  // autumn, diana, hannah, austin, daniel, troy
 const TTS_MAX_CHARS = 200; // حد Groq لكل طلب
 
 // 🔒 حماية: منع أي أحد يحمّل كود السيرفر أو ملفات الإعداد من المتصفح
@@ -1018,7 +1020,7 @@ app.post(
       const form = new FormData();
       form.append("file", new Blob([audio], { type: mime }), `voice.${ext}`);
       form.append("model", STT_MODEL);
-      form.append("response_format", "json");
+      form.append("response_format", "verbose_json"); // يرجّع اللغة كمان
       form.append("temperature", "0");
 
       // اللغة اختيارية: إذا ما انرسلت، Whisper يكتشفها تلقائياً
@@ -1040,7 +1042,10 @@ app.post(
       }
 
       const data = await response.json();
-      res.json({ text: String(data.text || "").trim() });
+      res.json({
+        text: String(data.text || "").trim(),
+        language: normalizeLangHint(data.language) || null
+      });
 
     } catch (error) {
       console.error("STT ERROR:", error);
@@ -1050,7 +1055,9 @@ app.post(
 );
 
 // =====================================================
-// 🔊 نص → صوت (Orpheus عبر Groq)
+// 🔊 نص → صوت — متعدد اللغات بطابع "جارفس"
+// المحرك الأساسي: أصوات Microsoft Edge العصبية (مجاناً، أكثر من 70 لغة)
+// الاحتياطي: Groq Orpheus (عربي + إنجليزي فقط)
 // كل طلب حده 200 حرف، والواجهة تقسّم الرد لقطع
 // =====================================================
 function cleanForSpeech(text) {
@@ -1063,64 +1070,304 @@ function cleanForSpeech(text) {
     .trim();
 }
 
-app.post("/tts", async (req, res) => {
-  if (!API_KEY) {
-    return res.status(500).json({ error: "GROQ_API_KEY not set in Render" });
+// أصوات أنثوية هادئة وواضحة (طابع مساعد ذكي) — تقدر تغيّر أي وحدة من Render:
+// مثلاً VOICE_DE=de-DE-AmalaNeural أو VOICE_AR=ar-SA-ZariyahNeural
+const EDGE_VOICES = {
+  ar: "ar-IQ-RanaNeural",          // عربي (عراقي)
+  ckb: "fa-IR-DilaraNeural",       // كردي سوراني (أقرب صوت متوفر)
+  kmr: "tr-TR-EmelNeural",         // كردي كرمانجي (أقرب صوت متوفر)
+  de: "de-DE-KatjaNeural",         // ألماني — نفس طابع الفيديو
+  en: "en-US-AriaNeural",
+  fr: "fr-FR-DeniseNeural",
+  es: "es-ES-ElviraNeural",
+  it: "it-IT-ElsaNeural",
+  tr: "tr-TR-EmelNeural",
+  fa: "fa-IR-DilaraNeural",
+  ru: "ru-RU-SvetlanaNeural",
+  uk: "uk-UA-PolinaNeural",
+  nl: "nl-NL-ColetteNeural",
+  pt: "pt-BR-FranciscaNeural",
+  sv: "sv-SE-SofieNeural",
+  pl: "pl-PL-ZofiaNeural",
+  zh: "zh-CN-XiaoxiaoNeural",
+  ja: "ja-JP-NanamiNeural",
+  ko: "ko-KR-SunHiNeural",
+  hi: "hi-IN-SwaraNeural",
+  ur: "ur-PK-UzmaNeural",
+  he: "he-IL-HilaNeural",
+  id: "id-ID-GadisNeural"
+};
+
+function voiceFor(lang) {
+  const env = process.env[`VOICE_${lang.toUpperCase()}`];
+  if (env) return env;
+  if (EDGE_VOICES[lang]) return EDGE_VOICES[lang];
+
+  // أي لغة ثانية: نختار أول صوت أنثوي متوفر لها
+  const list = edgeVoiceList || [];
+  const female = list.find(v => v.Locale.toLowerCase().startsWith(lang + "-") && v.Gender === "Female");
+  const any = list.find(v => v.Locale.toLowerCase().startsWith(lang + "-"));
+  return (female || any)?.ShortName || EDGE_VOICES.en;
+}
+
+let edgeVoiceList = null;
+
+async function loadEdgeVoices() {
+  try {
+    edgeVoiceList = await new MsEdgeTTS().getVoices();
+    console.log(`Edge TTS voices loaded: ${edgeVoiceList.length}`);
+  } catch (error) {
+    console.error("EDGE VOICES ERROR:", error.message);
+  }
+}
+
+loadEdgeVoices();
+
+// ===== كشف لغة النص =====
+const LATIN_WORDS = {
+  en: ["the", "and", "is", "are", "you", "to", "of", "it", "that", "for", "with", "this", "what", "have", "can", "your", "i", "my", "how", "do"],
+  de: ["der", "die", "das", "und", "ist", "nicht", "ich", "du", "sie", "es", "ein", "eine", "mit", "auf", "für", "wie", "was", "auch", "zu", "dein", "ja", "bin", "hast", "kann", "sind", "wir", "habe", "haben", "noch", "jetzt", "heute", "gut", "danke", "bitte", "hallo", "guten", "drei", "zwei", "eins", "mein", "dir", "mir", "dich", "mich", "wird", "werden", "kein", "oder", "aber", "den", "dem"],
+  fr: ["le", "la", "les", "et", "est", "je", "tu", "vous", "une", "des", "pour", "que", "qui", "pas", "avec", "dans", "ce", "bonjour", "merci", "suis"],
+  es: ["el", "los", "las", "y", "es", "que", "yo", "tú", "una", "para", "con", "por", "como", "pero", "muy", "hola", "gracias", "estoy", "qué"],
+  it: ["il", "lo", "gli", "e", "è", "che", "io", "sono", "una", "per", "con", "non", "come", "ciao", "grazie", "della", "mi"],
+  pt: ["o", "os", "as", "e", "é", "que", "eu", "você", "uma", "para", "com", "não", "como", "obrigado", "olá", "está"],
+  nl: ["de", "het", "een", "en", "is", "ik", "jij", "je", "niet", "van", "met", "voor", "hoe", "wat", "dank", "hallo"],
+  tr: ["bir", "ve", "bu", "ne", "ben", "sen", "için", "ile", "nasıl", "değil", "var", "yok", "merhaba", "teşekkür", "mi", "mı", "çok"],
+  kmr: ["ez", "tu", "û", "ji", "bi", "di", "de", "ku", "çi", "çawa", "heye", "nîne", "silav", "spas", "dikarim", "min", "te", "em", "îro", "baş"],
+  pl: ["i", "w", "na", "jest", "nie", "się", "to", "że", "jak", "co", "ja", "ty", "dziękuję", "cześć"],
+  sv: ["och", "är", "jag", "du", "det", "att", "en", "ett", "inte", "med", "för", "hej", "tack"],
+  id: ["dan", "yang", "saya", "anda", "ini", "itu", "tidak", "dengan", "untuk", "apa", "bisa", "terima", "kasih"]
+};
+
+const WHISPER_LANGS = {
+  arabic: "ar", german: "de", english: "en", french: "fr", spanish: "es", italian: "it",
+  portuguese: "pt", dutch: "nl", turkish: "tr", persian: "fa", russian: "ru", ukrainian: "uk",
+  polish: "pl", swedish: "sv", chinese: "zh", japanese: "ja", korean: "ko", hindi: "hi",
+  urdu: "ur", hebrew: "he", indonesian: "id", greek: "el", romanian: "ro", czech: "cs",
+  hungarian: "hu", danish: "da", finnish: "fi", norwegian: "nb", bulgarian: "bg", serbian: "sr",
+  croatian: "hr", thai: "th", vietnamese: "vi", malay: "ms", azerbaijani: "az", kazakh: "kk",
+  georgian: "ka", armenian: "hy", pashto: "ps", bengali: "bn", tamil: "ta"
+};
+
+function normalizeLangHint(hint) {
+  const h = String(hint || "").toLowerCase().trim();
+  if (!h) return "";
+  if (WHISPER_LANGS[h]) return WHISPER_LANGS[h];
+  if (h === "ku" || h === "ckb" || h === "kmr") return h;
+  return /^[a-z]{2,3}$/.test(h) ? h : "";
+}
+
+function detectSpeechLang(text, hintRaw) {
+  const t = String(text || "");
+  const hint = normalizeLangHint(hintRaw);
+
+  // حروف غير لاتينية → نعرف اللغة من الحروف نفسها
+  if (/[؀-ۿ]/.test(t)) {
+    if (/[ڕڵۆێەڤ]/.test(t)) return "ckb";
+    if (/[ٹڈڑںےۓ]/.test(t)) return "ur";
+    if (["fa", "ur", "ps", "ckb"].includes(hint)) return hint;
+    const persian = (t.match(/(^|\s)(است|هست|می|این|برای|شما|را|خیلی|ممنون|چطور|هستم)(\s|$|[.,،؟?!])/g) || []).length;
+    const arabicAl = (t.match(/(^|\s)ال/g) || []).length;
+    if (persian >= 2 && persian > arabicAl) return "fa";
+    return "ar";
   }
 
+  if (/[֐-׿]/.test(t)) return "he";
+  if (/[Ѐ-ӿ]/.test(t)) return /[іїєґ]/i.test(t) ? "uk" : (["bg", "sr", "kk", "mn", "uk"].includes(hint) ? hint : "ru");
+  if (/[Ͱ-Ͽ]/.test(t)) return "el";
+  if (/[぀-ヿ]/.test(t)) return "ja";
+  if (/[가-힯]/.test(t)) return "ko";
+  if (/[一-鿿]/.test(t)) return "zh";
+  if (/[฀-๿]/.test(t)) return "th";
+  if (/[ऀ-ॿ]/.test(t)) return ["mr", "ne"].includes(hint) ? hint : "hi";
+  if (/[ঀ-৿]/.test(t)) return "bn";
+  if (/[஀-௿]/.test(t)) return "ta";
+  if (/[Ⴀ-ჿ]/.test(t)) return "ka";
+
+  // حروف لاتينية → نعدّ الكلمات الشائعة لكل لغة
+  const words = t.toLowerCase().match(/[a-zà-ÿçğışêîûœ]+/g) || [];
+  const scores = {};
+
+  for (const [lang, list] of Object.entries(LATIN_WORDS)) {
+    const set = new Set(list);
+    scores[lang] = words.reduce((n, w) => n + (set.has(w) ? 1 : 0), 0);
+  }
+
+  if (/[ßäöü]/i.test(t) && !/[ığş]/i.test(t)) scores.de += 2;
+  if (/[ığ]/i.test(t)) scores.tr += 2;
+  if (/[êîû]/i.test(t) && /[çş]/i.test(t)) scores.kmr += 2;
+  if (/[ñ¿¡]/i.test(t)) scores.es += 2;
+  if (/[ãõ]/i.test(t)) scores.pt += 2;
+  if (/[œàèù]/i.test(t)) scores.fr += 1;
+
+  const [best, bestScore] = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
+  const latinHint = hint === "ku" ? "kmr" : hint;
+
+  if (latinHint && scores[latinHint] !== undefined && scores[latinHint] >= bestScore - 1) return latinHint;
+  if (bestScore >= 1) return best;
+  return latinHint && !["ar", "fa", "ur", "ckb"].includes(latinHint) ? latinHint : "en";
+}
+
+// ===== تجهيز الكردي للأصوات القريبة منه =====
+// سوراني → نبدّل الحروف الكردية بأقرب حرف فارسي حتى الصوت الفارسي يقرأها
+function soraniForPersian(text) {
+  return text
+    .replace(/(^|[\s،,.؟?!])ئە/g, "$1اَ")
+    .replace(/ئ/g, "ا")
+    .replace(/ڵ/g, "ل")
+    .replace(/ڕ/g, "ر")
+    .replace(/ۆ/g, "و")
+    .replace(/وو/g, "و")
+    .replace(/ێ/g, "ی")
+    .replace(/ڤ/g, "و")
+    .replace(/ە(?=[؀-ۿ])/g, "َ")
+    .replace(/ە/g, "ه");
+}
+
+// كرمانجي → حروف ما موجودة بالتركي نبدّلها بالأقرب
+function kurmanjiForTurkish(text) {
+  return text
+    .replace(/ê/g, "e").replace(/Ê/g, "E")
+    .replace(/x/g, "h").replace(/X/g, "H")
+    .replace(/q/g, "k").replace(/Q/g, "K");
+}
+
+function escapeXml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+async function edgeSpeak(text, voice) {
+  const tts = new MsEdgeTTS();
+  await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+
+  try {
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Edge TTS timeout")), 15000);
+      const { audioStream } = tts.toStream(escapeXml(text), {
+        rate: process.env.TTS_RATE || "+18%",   // أسرع شوية = طابع جارفس
+        pitch: process.env.TTS_PITCH || "+4%"   // أخف وأوضح
+      });
+      const chunks = [];
+
+      audioStream.on("data", c => chunks.push(c));
+      audioStream.on("error", e => { clearTimeout(timer); reject(e); });
+      audioStream.on("close", () => {
+        clearTimeout(timer);
+        const buf = Buffer.concat(chunks);
+        buf.length > 500 ? resolve(buf) : reject(new Error("Edge TTS returned empty audio"));
+      });
+    });
+  } finally {
+    try { tts.close(); } catch {}
+  }
+}
+
+// بعض الأصوات تفشل أحياناً → نعيد المحاولة، وبعدها نجرب صوت ثاني لنفس اللغة
+async function edgeSpeakWithRetry(text, lang) {
+  const main = voiceFor(lang);
+  const prefix = main.split("-").slice(0, 2).join("-").toLowerCase();
+  const backups = (edgeVoiceList || [])
+    .filter(v => v.Locale.toLowerCase() === prefix && v.ShortName !== main)
+    .sort((a, b) => (a.Gender === "Female" ? -1 : 1) - (b.Gender === "Female" ? -1 : 1))
+    .map(v => v.ShortName);
+
+  const attempts = [main, main, ...backups.slice(0, 2)];
+  let lastError;
+
+  for (const voice of attempts) {
+    try {
+      return await edgeSpeak(text, voice);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
+
+async function groqSpeak(text, lang) {
+  if (!API_KEY || !["ar", "en"].includes(lang)) {
+    throw new Error("Groq TTS supports Arabic and English only");
+  }
+
+  const response = await fetch(GROQ_TTS_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${API_KEY}`
+    },
+    body: JSON.stringify({
+      model: lang === "ar" ? GROQ_TTS_MODEL_AR : GROQ_TTS_MODEL_EN,
+      voice: lang === "ar" ? GROQ_VOICE_AR : GROQ_VOICE_EN,
+      input: text,
+      response_format: "wav"
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`Groq TTS ${response.status}: ${errorText.slice(0, 200)}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
+app.post("/tts", async (req, res) => {
   const text = cleanForSpeech(req.body?.text).slice(0, TTS_MAX_CHARS);
 
   if (!text) {
     return res.status(400).json({ error: "No text" });
   }
 
-  const lang = detectLang(text);
+  // نكشف اللغة من عيّنة أكبر من الرد (أدق للجمل القصيرة)، وبعدين نتأكد من القطعة نفسها
+  const context = cleanForSpeech(req.body?.context).slice(0, 500);
+  const contextLang = context ? detectSpeechLang(context, req.body?.lang) : normalizeLangHint(req.body?.lang);
+  const lang = detectSpeechLang(text, contextLang);
+  const engines = TTS_ENGINE === "groq" ? ["groq", "edge"] : ["edge", "groq"];
+  const errors = [];
 
-  // الكردي ما مدعوم بـ Orpheus → الواجهة تستخدم صوت المتصفح بداله
-  if (lang === "ku") {
-    return res.status(415).json({ error: "unsupported_language", fallback: true });
-  }
+  for (const engine of engines) {
+    try {
+      let audio;
+      let type;
 
-  const isArabic = /[؀-ۿ]/.test(text);
+      if (engine === "edge") {
+        const input =
+          lang === "ckb" ? soraniForPersian(text) :
+          lang === "kmr" ? kurmanjiForTurkish(text) :
+          text;
 
-  try {
-    const response = await fetch(GROQ_TTS_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${API_KEY}`
-      },
-      body: JSON.stringify({
-        model: isArabic ? TTS_MODEL_AR : TTS_MODEL_EN,
-        voice: isArabic ? TTS_VOICE_AR : TTS_VOICE_EN,
-        input: text,
-        response_format: "wav"
-      })
-    });
+        audio = await edgeSpeakWithRetry(input, lang);
+        type = "audio/mpeg";
+      } else {
+        audio = await groqSpeak(text, lang);
+        type = "audio/wav";
+      }
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "");
-      console.error("TTS ERROR:", response.status, errorText);
-      return res.status(502).json({
-        error: `TTS Error ${response.status}: ${errorText.slice(0, 300)}`,
-        fallback: true
+      res.set({
+        "Content-Type": type,
+        "Content-Length": audio.length,
+        "Cache-Control": "no-store",
+        "X-TTS-Lang": lang,
+        "X-TTS-Engine": engine,
+        "Access-Control-Expose-Headers": "X-TTS-Lang, X-TTS-Engine"
       });
+
+      return res.send(audio);
+
+    } catch (error) {
+      errors.push(`${engine}: ${error.message}`);
     }
-
-    const audio = Buffer.from(await response.arrayBuffer());
-
-    res.set({
-      "Content-Type": "audio/wav",
-      "Content-Length": audio.length,
-      "Cache-Control": "no-store"
-    });
-
-    res.send(audio);
-
-  } catch (error) {
-    console.error("TTS ERROR:", error);
-    res.status(500).json({ error: "تعذّر توليد الصوت.", fallback: true });
   }
+
+  console.error("TTS ERROR:", lang, errors.join(" | "));
+
+  res.status(502).json({
+    error: `TTS failed (${lang}): ${errors.join(" | ").slice(0, 300)}`,
+    lang,
+    fallback: true
+  });
 });
 
 // =====================================================
@@ -1161,7 +1408,15 @@ app.get("/health", (req, res) => {
     app: APP_NAME,
     groqKey: Boolean(API_KEY),
     stt: STT_MODEL,
-    tts: { ar: `${TTS_MODEL_AR} / ${TTS_VOICE_AR}`, en: `${TTS_MODEL_EN} / ${TTS_VOICE_EN}` }
+    tts: {
+      engine: TTS_ENGINE,
+      edgeVoices: edgeVoiceList ? edgeVoiceList.length : 0,
+      ar: voiceFor("ar"),
+      de: voiceFor("de"),
+      en: voiceFor("en"),
+      kurdishSorani: voiceFor("ckb"),
+      kurdishKurmanji: voiceFor("kmr")
+    }
   });
 });
 
