@@ -23,9 +23,15 @@
         </div>
       </div>
 
-      <div class="connection-status">
-        <span class="status-dot"></span>
-        <span id="status-text">جاهز</span>
+      <div class="top-actions">
+        <button type="button" id="market-btn" class="pill-button" aria-label="لوحة السوق">
+          📈 <span>السوق</span>
+        </button>
+
+        <div class="connection-status">
+          <span class="status-dot"></span>
+          <span id="status-text">جاهز</span>
+        </div>
       </div>
     </header>
 
@@ -47,9 +53,34 @@
           <p class="eyebrow">INTELLIGENT ASSISTANT</p>
           <h2 id="welcome-title">مرحباً، أنا My Ai Bot</h2>
           <p id="welcome-subtitle">
-            أنا هنا لمساعدتك. اسألني أو أخبرني بما تريد إنجازه.
+            اكتب لي أو اضغط 🎙 وتكلّم. اضغط على الدائرة لإيقاف الصوت.
           </p>
         </div>
+      </section>
+
+      <section id="market-panel" class="market-panel hidden" aria-label="لوحة السوق">
+        <div class="market-head">
+          <div class="market-symbols" id="market-symbols"></div>
+          <div class="market-intervals" id="market-intervals">
+            <button type="button" data-interval="15m">15د</button>
+            <button type="button" data-interval="1h" class="active">1س</button>
+            <button type="button" data-interval="1d">يوم</button>
+          </div>
+        </div>
+
+        <div class="market-price">
+          <div>
+            <span id="market-name">BTC</span>
+            <strong id="market-last">—</strong>
+          </div>
+          <span id="market-change" class="market-change">—</span>
+        </div>
+
+        <canvas id="market-canvas" height="220"></canvas>
+
+        <p class="market-note">
+          أسعار حية للعرض فقط (<span id="market-source">—</span>) — البوت لا ينفّذ صفقات ولا يضمن أرباح.
+        </p>
       </section>
 
       <section id="chat" class="chat-area" aria-live="polite">
@@ -110,6 +141,16 @@
 
           <button
             type="button"
+            id="speaker-btn"
+            class="tool-button speaker-button active"
+            aria-label="الرد الصوتي"
+            title="الرد الصوتي: شغّال"
+          >
+            <span>🔊</span>
+          </button>
+
+          <button
+            type="button"
             id="mic-btn"
             class="tool-button mic-button"
             aria-label="التحدث"
@@ -125,6 +166,13 @@
             aria-label="إرسال"
           >
             <span>➤</span>
+          </button>
+        </div>
+
+        <div class="voice-row">
+          <button type="button" id="talk-mode-btn" class="pill-button talk-mode">
+            <span class="talk-dot"></span>
+            <span id="talk-mode-text">محادثة صوتية مستمرة</span>
           </button>
         </div>
 
