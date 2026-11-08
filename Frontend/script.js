@@ -19,6 +19,40 @@ let audioChunks = [];
 let isRecording = false;
 let sending = false;
 
+// معلومات الموقع والمنطقة الزمنية
+async function getClientContext() {
+  const timezone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve({ location: null, timezone });
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          location: {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude
+          },
+          timezone
+        });
+      },
+      (error) => {
+        console.warn("تعذر تحديد الموقع:", error.message);
+        resolve({ location: null, timezone });
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 7000,
+        maximumAge: 300000
+      }
+    );
+  });
+}
+
 function setStatus(text) {
   if (statusText) statusText.textContent = text;
 }
@@ -57,17 +91,17 @@ function showImage(file) {
 }
 
 plusBtn?.addEventListener("click", () => {
-  attachmentMenu.classList.toggle("hidden");
+  attachmentMenu?.classList.toggle("hidden");
 });
 
 document.getElementById("choose-image")?.addEventListener("click", () => {
-  attachmentMenu.classList.add("hidden");
-  fileInput.click();
+  attachmentMenu?.classList.add("hidden");
+  fileInput?.click();
 });
 
 document.getElementById("open-camera")?.addEventListener("click", () => {
-  attachmentMenu.classList.add("hidden");
-  cameraInput.click();
+  attachmentMenu?.classList.add("hidden");
+  cameraInput?.click();
 });
 
 fileInput?.addEventListener("change", () => {
@@ -82,6 +116,7 @@ document.addEventListener("click", (event) => {
   if (
     attachmentMenu &&
     !attachmentMenu.contains(event.target) &&
+    plusBtn &&
     !plusBtn.contains(event.target)
   ) {
     attachmentMenu.classList.add("hidden");
@@ -96,9 +131,11 @@ async function sendMessage(event) {
   if ((!text && !selectedImageBase64) || sending) return;
 
   sending = true;
-  sendBtn.disabled = true;
+
+  if (sendBtn) sendBtn.disabled = true;
+
   setStatus("يفكر...");
-  orb.classList.add("speaking");
+  orb?.classList.add("speaking");
 
   const userContent = selectedImageBase64
     ? [
@@ -128,22 +165,33 @@ async function sendMessage(event) {
   });
 
   input.value = "";
+
   selectedImageBase64 = null;
-  fileInput.value = "";
-  cameraInput.value = "";
-  preview.innerHTML = "";
+
+  if (fileInput) fileInput.value = "";
+  if (cameraInput) cameraInput.value = "";
+  if (preview) preview.innerHTML = "";
 
   const botMessage = addMessage("", "bot");
   let reply = "";
 
   try {
+    // الحصول على موقع الجهاز والتوقيت المحلي
+    setStatus("أحدد موقعك...");
+
+    const clientContext = await getClientContext();
+
+    setStatus("يفكر...");
+
     const response = await fetch("/ask/stream", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        messages: history
+        messages: history,
+        location: clientContext.location,
+        timezone: clientContext.timezone
       })
     });
 
@@ -157,6 +205,7 @@ async function sendMessage(event) {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+
     let buffer = "";
     let finished = false;
 
@@ -177,7 +226,8 @@ async function sendMessage(event) {
 
         const data = trimmed.slice(5).trim();
 
-        if (data === "[DONE]") {
+        // دعم طريقتي إرسال نهاية الرد
+        if (data === "[DONE]" || data === '"[DONE]"') {
           finished = true;
           break;
         }
@@ -195,8 +245,40 @@ async function sendMessage(event) {
             chat.scrollTop = chat.scrollHeight;
           }
         } catch (error) {
-          if (error.message !== "Unexpected end of JSON input") {
-            if (error.message && !error.message.includes("JSON")) {
+          if (
+            error.message &&
+            !error.message.includes("JSON")
+          ) {
+            throw error;
+          }
+        }
+      }
+    }
+
+    // معالجة أي بيانات متبقية في نهاية البث
+    if (!finished && buffer.trim()) {
+      const remaining = buffer.trim();
+
+      if (remaining.startsWith("data:")) {
+        const data = remaining.slice(5).trim();
+
+        if (data !== "[DONE]" && data !== '"[DONE]"') {
+          try {
+            const obj = JSON.parse(data);
+
+            if (obj.token) {
+              reply += obj.token;
+              botMessage.textContent = reply;
+            }
+
+            if (obj.error) {
+              throw new Error(obj.error);
+            }
+          } catch (error) {
+            if (
+              error.message &&
+              !error.message.includes("JSON")
+            ) {
               throw error;
             }
           }
@@ -215,22 +297,30 @@ async function sendMessage(event) {
 
   } catch (error) {
     console.error(error);
+
     botMessage.textContent =
       "حدث خطأ أثناء الاتصال. تأكد من اتصال الإنترنت وحاول مجدداً.";
+
     setStatus("خطأ بالاتصال");
+
   } finally {
     sending = false;
-    sendBtn.disabled = false;
-    orb.classList.remove("speaking");
-    if (statusText.textContent !== "خطأ بالاتصال") {
+
+    if (sendBtn) sendBtn.disabled = false;
+
+    orb?.classList.remove("speaking");
+
+    if (statusText?.textContent !== "خطأ بالاتصال") {
       setStatus("جاهز");
     }
-    input.focus();
+
+    input?.focus();
   }
 }
 
-form.addEventListener("submit", sendMessage);
+form?.addEventListener("submit", sendMessage);
 
+// التسجيل الصوتي الحالي
 micBtn?.addEventListener("click", async () => {
   if (isRecording) {
     mediaRecorder?.stop();
@@ -259,24 +349,38 @@ micBtn?.addEventListener("click", async () => {
         type: mediaRecorder.mimeType || "audio/webm"
       });
 
-      console.log("تم تسجيل الصوت:", audioBlob.size, "bytes");
+      console.log(
+        "تم تسجيل الصوت:",
+        audioBlob.size,
+        "bytes"
+      );
 
       isRecording = false;
+
       micBtn.classList.remove("recording");
-      orb.classList.remove("listening");
+      orb?.classList.remove("listening");
+
       setStatus("انتهى التسجيل");
 
-      alert("تم تسجيل الصوت محلياً. ربط تحويل الصوت إلى نص وإرسال الرد الصوتي يحتاج إضافة دعم صوتي للسيرفر في الخطوة القادمة.");
+      alert(
+        "تم تسجيل الصوت محلياً. تحويله إلى نص وإرسال رد صوتي يحتاج ربط خدمة الصوت بالسيرفر."
+      );
     };
 
     mediaRecorder.start();
+
     isRecording = true;
+
     micBtn.classList.add("recording");
-    orb.classList.add("listening");
+    orb?.classList.add("listening");
+
     setStatus("أستمع إليك...");
 
   } catch (error) {
     console.error(error);
-    alert("لم أتمكن من الوصول إلى الميكروفون. تحقق من إذن استخدامه.");
+
+    alert(
+      "لم أتمكن من الوصول إلى الميكروفون. تحقق من إذن استخدامه."
+    );
   }
 });
