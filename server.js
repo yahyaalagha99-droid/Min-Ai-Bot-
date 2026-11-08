@@ -19,6 +19,35 @@ const MODEL = "openai/gpt-oss-20b";
 const CACHE_TTL = 10 * 60 * 1000;
 const HTTP_TIMEOUT = 20000;
 
+// ===== إعدادات الصوت (Groq) =====
+// تقدر تغيّرها من Render > Environment بدون تعديل الكود
+const GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
+const GROQ_TTS_URL = "https://api.groq.com/openai/v1/audio/speech";
+const STT_MODEL = process.env.STT_MODEL || "whisper-large-v3-turbo";
+const TTS_MODEL_AR = process.env.TTS_MODEL_AR || "canopylabs/orpheus-arabic-saudi";
+const TTS_MODEL_EN = process.env.TTS_MODEL_EN || "canopylabs/orpheus-v1-english";
+const TTS_VOICE_AR = process.env.TTS_VOICE_AR || "lulwa";   // abdullah, fahad, sultan, lulwa, noura, aisha
+const TTS_VOICE_EN = process.env.TTS_VOICE_EN || "hannah";  // autumn, diana, hannah, austin, daniel, troy
+const TTS_MAX_CHARS = 200; // حد Groq لكل طلب
+
+// 🔒 حماية: منع أي أحد يحمّل كود السيرفر أو ملفات الإعداد من المتصفح
+app.use((req, res, next) => {
+  let p = req.path.toLowerCase();
+  try { p = decodeURIComponent(req.path).toLowerCase(); } catch {}
+
+  if (
+    p === "/server.js" ||
+    /^\/package(-lock)?\.json$/.test(p) ||
+    p.startsWith("/node_modules") ||
+    p.startsWith("/.") ||
+    p.endsWith(".env")
+  ) {
+    return res.status(404).send("Not found");
+  }
+
+  next();
+});
+
 app.use(express.static(__dirname));
 app.use(express.static(path.join(__dirname, "Frontend")));
 
@@ -519,6 +548,155 @@ function containsWord(text, words) {
   return words.some(word => n.includes(norm(word)));
 }
 
+// ===== أسعار العملات الرقمية الحية =====
+const CRYPTO = {
+  BTC: { name: "Bitcoin", ar: "بيتكوين", coinbase: "BTC-USD", kraken: "XBTUSD", words: ["بيتكوين", "بتكوين", "البيتكوين", "bitcoin", "btc"] },
+  ETH: { name: "Ethereum", ar: "إيثيريوم", coinbase: "ETH-USD", kraken: "ETHUSD", words: ["ايثيريوم", "ايثريوم", "ايثر", "ethereum", "eth"] },
+  SOL: { name: "Solana", ar: "سولانا", coinbase: "SOL-USD", kraken: "SOLUSD", words: ["سولانا", "solana", "sol"] },
+  XRP: { name: "XRP", ar: "ريبل", coinbase: "XRP-USD", kraken: "XRPUSD", words: ["ريبل", "ripple", "xrp"] },
+  DOGE: { name: "Dogecoin", ar: "دوجكوين", coinbase: "DOGE-USD", kraken: "XDGUSD", words: ["دوج", "دوجكوين", "dogecoin", "doge"] }
+};
+
+const PRICE_WORDS = [
+  "سعر", "اسعار", "كم صار", "بكم", "قيمة", "قيمه",
+  "price", "worth", "نرخ"
+];
+
+const marketCache = new Map();
+
+function findCryptoSymbol(text) {
+  const n = norm(text);
+
+  for (const [symbol, info] of Object.entries(CRYPTO)) {
+    const found = info.words.some(w => {
+      const word = norm(w);
+      // الكلمات الإنجليزية القصيرة لازم تكون كلمة مستقلة
+      if (/^[a-z]{2,4}$/.test(word)) {
+        return new RegExp(`(^|[^a-z])${word}([^a-z]|$)`).test(n);
+      }
+      return n.includes(word);
+    });
+
+    if (found) return symbol;
+  }
+
+  return null;
+}
+
+function isCryptoPriceQuestion(text) {
+  return Boolean(findCryptoSymbol(text)) && containsWord(text, PRICE_WORDS);
+}
+
+async function getCandles(symbol, interval = "1h") {
+  const info = CRYPTO[symbol];
+  if (!info) throw new Error("Unknown symbol");
+
+  const granularity = interval === "1d" ? 86400 : interval === "15m" ? 900 : 3600;
+  const cacheKey = `${symbol}|${granularity}`;
+  const cached = marketCache.get(cacheKey);
+
+  if (cached && Date.now() - cached.time < 15000) {
+    return cached.value;
+  }
+
+  let candles = null;
+  let source = "";
+
+  // المصدر الأول: Coinbase
+  try {
+    const data = await fetchJson(
+      `https://api.exchange.coinbase.com/products/${info.coinbase}/candles?granularity=${granularity}`
+    );
+
+    if (Array.isArray(data) && data.length) {
+      // الصيغة: [time, low, high, open, close, volume] من الأحدث للأقدم
+      candles = data
+        .slice(0, 120)
+        .map(c => ({ t: c[0] * 1000, l: c[1], h: c[2], o: c[3], c: c[4], v: c[5] }))
+        .reverse();
+      source = "Coinbase";
+    }
+  } catch (error) {
+    console.error("COINBASE ERROR:", error.message);
+  }
+
+  // المصدر البديل: Kraken
+  if (!candles) {
+    try {
+      const data = await fetchJson(
+        `https://api.kraken.com/0/public/OHLC?pair=${info.kraken}&interval=${granularity / 60}`
+      );
+
+      const key = Object.keys(data.result || {}).find(k => k !== "last");
+      const rows = key ? data.result[key] : [];
+
+      if (rows.length) {
+        candles = rows.slice(-120).map(c => ({
+          t: c[0] * 1000,
+          o: Number(c[1]),
+          h: Number(c[2]),
+          l: Number(c[3]),
+          c: Number(c[4]),
+          v: Number(c[6])
+        }));
+        source = "Kraken";
+      }
+    } catch (error) {
+      console.error("KRAKEN ERROR:", error.message);
+    }
+  }
+
+  if (!candles) throw new Error("All market providers failed");
+
+  const last = candles[candles.length - 1].c;
+  const dayAgoIndex = Math.max(0, candles.length - 1 - Math.round(86400 / granularity));
+  const ref = candles[dayAgoIndex].o;
+  const change = ref ? ((last - ref) / ref) * 100 : 0;
+
+  const value = {
+    symbol,
+    name: info.name,
+    price: last,
+    change24h: Number(change.toFixed(2)),
+    candles,
+    source,
+    updated: Date.now()
+  };
+
+  marketCache.set(cacheKey, { value, time: Date.now() });
+  return value;
+}
+
+function formatPrice(p) {
+  if (p >= 100) return p.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (p >= 1) return p.toFixed(3);
+  return p.toFixed(5);
+}
+
+async function getCryptoPriceText(text) {
+  const symbol = findCryptoSymbol(text);
+  const lang = detectLang(text);
+  const info = CRYPTO[symbol];
+
+  try {
+    const data = await getCandles(symbol, "1h");
+    const arrow = data.change24h >= 0 ? "▲" : "▼";
+
+    if (lang === "en") {
+      return `${info.name} (${symbol}) is at $${formatPrice(data.price)} — ${arrow} ${data.change24h}% in the last 24h. (Source: ${data.source}. Not financial advice.)`;
+    }
+
+    return `💰 سعر ${info.ar} (${symbol}) الآن: ${formatPrice(data.price)} دولار
+${arrow} التغير خلال 24 ساعة: ${data.change24h}%
+المصدر: ${data.source} — هذي معلومة وليست نصيحة استثمارية.`;
+  } catch (error) {
+    console.error("CRYPTO PRICE ERROR:", error);
+    return lang === "en"
+      ? "I couldn't fetch the live price right now. Please try again."
+      : "تعذّر جلب السعر الحي حالياً. حاول مرة ثانية.";
+  }
+}
+
 function hasWeatherWord(text) {
   return containsWord(text, WEATHER_WORDS);
 }
@@ -552,6 +730,7 @@ function isQuickCommand(text) {
 
   if (!t) return false;
   if (isIdentityQuestion(t)) return true;
+  if (isCryptoPriceQuestion(t)) return true;
 
   return containsWord(t, WEATHER_WORDS) ||
     containsWord(t, TIME_WORDS) ||
@@ -563,6 +742,11 @@ async function handleQuickCommand(text, location, timezone) {
 
   if (isIdentityQuestion(text)) {
     return `The developer is ${DEVELOPER_NAME}.`;
+  }
+
+  // الأسعار قبل الوقت والتاريخ (حتى "سعر البيتكوين اليوم" ما يرجع التاريخ)
+  if (isCryptoPriceQuestion(text)) {
+    return getCryptoPriceText(text);
   }
 
   if (hasWeatherWord(text)) {
@@ -633,7 +817,7 @@ function sendDone(res) {
   res.write("data: [DONE]\n\n");
 }
 
-function buildSystemPrompt(timezone) {
+function buildSystemPrompt(timezone, voice = false) {
   const live = [
     `Current date and time: ${getNowText(timezone)}`,
     `User timezone: ${timezone}`,
@@ -659,7 +843,16 @@ Rules:
 - Do not mention the developer unless asked.
 
 LIVE INFORMATION:
-${live.join("\n")}`;
+${live.join("\n")}${voice ? `
+
+VOICE MODE (your answer will be read aloud):
+- Keep answers short: 1 to 3 sentences unless the user asks for detail.
+- No markdown, no lists, no emojis, no symbols, no links.
+- Write numbers in a way that sounds natural when spoken.` : ""}
+
+TRADING / FINANCE:
+- You cannot place trades, access bank accounts, or move money.
+- Never promise profits or guaranteed returns. Market prices are only provided by the app's live price tool.`;
 }
 
 app.post("/ask/stream", async (req, res) => {
@@ -673,6 +866,7 @@ app.post("/ask/stream", async (req, res) => {
   const lastUserText = extractLastUserMessage(messages);
   const location = validLocation(req.body?.location);
   const timezone = validTimezone(req.body?.timezone || "UTC");
+  const voice = req.body?.voice === true;
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
@@ -708,7 +902,7 @@ app.post("/ask/stream", async (req, res) => {
   const formattedMessages = [
     {
       role: "system",
-      content: buildSystemPrompt(timezone)
+      content: buildSystemPrompt(timezone, voice)
     },
     ...messages
   ];
@@ -792,6 +986,183 @@ app.post("/ask/stream", async (req, res) => {
       res.end();
     }
   }
+});
+
+// =====================================================
+// 🎙 الصوت → نص (Whisper عبر Groq)
+// الواجهة ترسل الملف الصوتي مباشرة (audio/webm أو audio/mp4)
+// =====================================================
+app.post(
+  "/transcribe",
+  express.raw({ type: () => true, limit: "25mb" }),
+  async (req, res) => {
+    if (!API_KEY) {
+      return res.status(500).json({ error: "GROQ_API_KEY not set in Render" });
+    }
+
+    const audio = req.body;
+
+    if (!Buffer.isBuffer(audio) || audio.length < 1000) {
+      return res.status(400).json({ error: "التسجيل قصير جداً أو فارغ." });
+    }
+
+    const mime = String(req.headers["content-type"] || "audio/webm").split(";")[0];
+    const ext =
+      mime.includes("mp4") || mime.includes("m4a") ? "m4a" :
+      mime.includes("ogg") ? "ogg" :
+      mime.includes("wav") ? "wav" :
+      mime.includes("mpeg") || mime.includes("mp3") ? "mp3" :
+      "webm";
+
+    try {
+      const form = new FormData();
+      form.append("file", new Blob([audio], { type: mime }), `voice.${ext}`);
+      form.append("model", STT_MODEL);
+      form.append("response_format", "json");
+      form.append("temperature", "0");
+
+      // اللغة اختيارية: إذا ما انرسلت، Whisper يكتشفها تلقائياً
+      const lang = String(req.query.lang || "");
+      if (/^[a-z]{2}$/.test(lang)) form.append("language", lang);
+
+      const response = await fetch(GROQ_STT_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+        body: form
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "");
+        console.error("STT ERROR:", response.status, errorText);
+        return res.status(502).json({
+          error: `STT Error ${response.status}: ${errorText.slice(0, 200)}`
+        });
+      }
+
+      const data = await response.json();
+      res.json({ text: String(data.text || "").trim() });
+
+    } catch (error) {
+      console.error("STT ERROR:", error);
+      res.status(500).json({ error: "تعذّر تحويل الصوت إلى نص." });
+    }
+  }
+);
+
+// =====================================================
+// 🔊 نص → صوت (Orpheus عبر Groq)
+// كل طلب حده 200 حرف، والواجهة تقسّم الرد لقطع
+// =====================================================
+function cleanForSpeech(text) {
+  return String(text || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[*_#>`~|•▲▼]/g, " ")
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+app.post("/tts", async (req, res) => {
+  if (!API_KEY) {
+    return res.status(500).json({ error: "GROQ_API_KEY not set in Render" });
+  }
+
+  const text = cleanForSpeech(req.body?.text).slice(0, TTS_MAX_CHARS);
+
+  if (!text) {
+    return res.status(400).json({ error: "No text" });
+  }
+
+  const lang = detectLang(text);
+
+  // الكردي ما مدعوم بـ Orpheus → الواجهة تستخدم صوت المتصفح بداله
+  if (lang === "ku") {
+    return res.status(415).json({ error: "unsupported_language", fallback: true });
+  }
+
+  const isArabic = /[؀-ۿ]/.test(text);
+
+  try {
+    const response = await fetch(GROQ_TTS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${API_KEY}`
+      },
+      body: JSON.stringify({
+        model: isArabic ? TTS_MODEL_AR : TTS_MODEL_EN,
+        voice: isArabic ? TTS_VOICE_AR : TTS_VOICE_EN,
+        input: text,
+        response_format: "wav"
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      console.error("TTS ERROR:", response.status, errorText);
+      return res.status(502).json({
+        error: `TTS Error ${response.status}: ${errorText.slice(0, 300)}`,
+        fallback: true
+      });
+    }
+
+    const audio = Buffer.from(await response.arrayBuffer());
+
+    res.set({
+      "Content-Type": "audio/wav",
+      "Content-Length": audio.length,
+      "Cache-Control": "no-store"
+    });
+
+    res.send(audio);
+
+  } catch (error) {
+    console.error("TTS ERROR:", error);
+    res.status(500).json({ error: "تعذّر توليد الصوت.", fallback: true });
+  }
+});
+
+// =====================================================
+// 📈 بيانات السوق الحية (شموع + سعر) — قراءة فقط، بدون تداول
+// =====================================================
+app.get("/market", async (req, res) => {
+  const symbol = String(req.query.symbol || "BTC").toUpperCase();
+  const interval = ["15m", "1h", "1d"].includes(req.query.interval)
+    ? req.query.interval
+    : "1h";
+
+  if (!CRYPTO[symbol]) {
+    return res.status(400).json({ error: "Unknown symbol" });
+  }
+
+  try {
+    res.json(await getCandles(symbol, interval));
+  } catch (error) {
+    console.error("MARKET ERROR:", error);
+    res.status(502).json({ error: "تعذّر جلب بيانات السوق." });
+  }
+});
+
+app.get("/market/symbols", (req, res) => {
+  res.json(
+    Object.entries(CRYPTO).map(([symbol, info]) => ({
+      symbol,
+      name: info.name,
+      ar: info.ar
+    }))
+  );
+});
+
+// فحص سريع إن السيرفر شغّال
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    app: APP_NAME,
+    groqKey: Boolean(API_KEY),
+    stt: STT_MODEL,
+    tts: { ar: `${TTS_MODEL_AR} / ${TTS_VOICE_AR}`, en: `${TTS_MODEL_EN} / ${TTS_VOICE_EN}` }
+  });
 });
 
 const PORT = process.env.PORT || 5000;
