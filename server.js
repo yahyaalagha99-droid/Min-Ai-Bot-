@@ -117,7 +117,8 @@ async function fetchJson(url) {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "User-Agent": "My-Ai-Bot/1.0"
       }
     });
 
@@ -205,6 +206,7 @@ function extractCity(text) {
   return null;
 }
 
+// خدمة الطقس الأساسية والبديلة
 async function getWeather(city, location, timezone, lang) {
   const isEnglish = lang === "en";
   const label = city || (isEnglish ? "your current location" : "موقعك الحالي");
@@ -251,34 +253,93 @@ async function getWeather(city, location, timezone, lang) {
       longitude = result.longitude;
     }
 
-    const weatherUrl =
-      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
-      "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code" +
-      "&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1";
+    // المحاولة الأولى: Open-Meteo
+    try {
+      const weatherUrl =
+        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+        "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code" +
+        "&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1";
 
-    const weather = await fetchJson(weatherUrl);
+      const weather = await fetchJson(weatherUrl);
 
-    if (!weather.current) {
-      throw new Error("Weather response has no current data");
+      if (!weather.current) {
+        throw new Error("Weather response has no current data");
+      }
+
+      const current = weather.current;
+      const daily = weather.daily || {};
+
+      const description =
+        WMO[current.weather_code]?.[isEnglish ? 1 : 0] || "غير معروف";
+
+      const result = isEnglish
+        ? `Weather in ${city || label}: ${description}
+Temperature: ${current.temperature_2m}°C (feels like ${current.apparent_temperature}°C)
+Humidity: ${current.relative_humidity_2m}%
+Wind: ${current.wind_speed_10m} km/h
+Today's range: ${daily.temperature_2m_min?.[0]}° to ${daily.temperature_2m_max?.[0]}°C`
+        : `🌤️ الطقس في ${city || label}: ${description}
+• الحرارة الآن: ${current.temperature_2m}° مئوية
+• المحسوسة: ${current.apparent_temperature}°
+• الرطوبة: ${current.relative_humidity_2m}%
+• سرعة الرياح: ${current.wind_speed_10m} كم/س
+• حرارة اليوم: من ${daily.temperature_2m_min?.[0]}° إلى ${daily.temperature_2m_max?.[0]}°`;
+
+      cityCache.set(cacheKey, { value: result, time: Date.now() });
+      return result;
+
+    } catch (primaryError) {
+      console.error("PRIMARY WEATHER ERROR:", primaryError);
     }
 
-    const current = weather.current;
-    const daily = weather.daily || {};
+    // المحاولة الثانية: wttr.in
+    const alternativeLocation = location
+      ? `${latitude},${longitude}`
+      : city;
 
-    const description =
-      WMO[current.weather_code]?.[isEnglish ? 1 : 0] || "غير معروف";
+    const alternativeUrl =
+      `https://wttr.in/${encodeURIComponent(alternativeLocation)}?format=j1`;
 
-    const place = city || label;
+    const data = await fetchJson(alternativeUrl);
+
+    const current = data.current_condition?.[0];
+    const today = data.weather?.[0];
+
+    if (!current) {
+      throw new Error("Alternative weather service returned no current data");
+    }
+
+    const weatherDescription =
+      current.lang_ar?.[0]?.value ||
+      current.weatherDesc?.[0]?.value ||
+      "غير معروف";
+
+    const place =
+      data.nearest_area?.[0]?.areaName?.[0]?.value ||
+      city ||
+      label;
+
+    const temperature = current.temp_C;
+    const feelsLike = current.FeelsLikeC;
+    const humidity = current.humidity;
+    const wind = current.windspeedKmph;
+    const min = today?.mintempC ?? "—";
+    const max = today?.maxtempC ?? "—";
 
     const result = isEnglish
-      ? `Weather in ${place}: ${description}\nTemperature: ${current.temperature_2m}°C (feels like ${current.apparent_temperature}°C)\nHumidity: ${current.relative_humidity_2m}%\nWind: ${current.wind_speed_10m} km/h\nToday's range: ${daily.temperature_2m_min?.[0]}° to ${daily.temperature_2m_max?.[0]}°C`
-      : `🌤️ الطقس في ${place}: ${description}\n• الحرارة الآن: ${current.temperature_2m}° مئوية\n• المحسوسة: ${current.apparent_temperature}°\n• الرطوبة: ${current.relative_humidity_2m}%\n• سرعة الرياح: ${current.wind_speed_10m} كم/س\n• حرارة اليوم: من ${daily.temperature_2m_min?.[0]}° إلى ${daily.temperature_2m_max?.[0]}°`;
+      ? `Weather in ${place}: ${current.weatherDesc?.[0]?.value || "Unknown"}
+Temperature: ${temperature}°C (feels like ${feelsLike}°C)
+Humidity: ${humidity}%
+Wind: ${wind} km/h
+Today's range: ${min}° to ${max}°C`
+      : `🌤️ الطقس في ${place}: ${weatherDescription}
+• الحرارة الآن: ${temperature}° مئوية
+• المحسوسة: ${feelsLike}°
+• الرطوبة: ${humidity}%
+• سرعة الرياح: ${wind} كم/س
+• حرارة اليوم: من ${min}° إلى ${max}°`;
 
-    cityCache.set(cacheKey, {
-      value: result,
-      time: Date.now()
-    });
-
+    cityCache.set(cacheKey, { value: result, time: Date.now() });
     return result;
 
   } catch (error) {
