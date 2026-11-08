@@ -469,3 +469,208 @@ button {
   #q { font-size: 13px; }
   .chat-area { max-height: 220px; }
 }
+
+/* =====================================================
+   إضافات: الصوت + الدائرة التفاعلية + لوحة السوق
+   ===================================================== */
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pill-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid #8f70b955;
+  border-radius: 999px;
+  background: #1a1430cc;
+  color: #e6d7ff;
+  font-size: 12px;
+  transition: .2s;
+}
+
+.pill-button:hover,
+.pill-button.active {
+  border-color: var(--cyan);
+  box-shadow: 0 0 15px #42e8ff33;
+}
+
+/* الدائرة تتحرك حسب مستوى الصوت (--lvl من 0 إلى 1) */
+.orb-wrapper {
+  --lvl: 0;
+  cursor: pointer;
+}
+
+.orb-wrapper .orb-core {
+  transform: scale(calc(1 + var(--lvl) * .22));
+  transition: transform .08s linear;
+}
+
+.orb-wrapper .orb-glow {
+  opacity: calc(.45 + var(--lvl) * .55);
+}
+
+.orb-wrapper.listening .orb-core,
+.orb-wrapper.speaking .orb-core,
+.orb-wrapper.thinking .orb-core {
+  animation: none;
+}
+
+.orb-wrapper.listening .orb-glow {
+  background: linear-gradient(135deg, #ff3d7f, #ff9a3d);
+}
+
+.orb-wrapper.listening .orb-core {
+  border-color: #ff8fb4;
+  box-shadow: 0 0 30px #ff3d7faa, 0 0 70px #ff3d7f55, inset 0 0 30px #ffffff22;
+}
+
+.orb-wrapper.speaking .orb-glow {
+  background: linear-gradient(135deg, #a34cff, #24dfff);
+}
+
+.orb-wrapper.thinking .orb-ring-one {
+  border-color: #42e8ffaa;
+  border-top-color: transparent;
+  animation: rotate 1s linear infinite;
+}
+
+.orb-wrapper.thinking .orb-ring-two {
+  animation: rotate-reverse 2s linear infinite;
+}
+
+.speaker-button {
+  font-size: 16px;
+  opacity: .5;
+}
+
+.speaker-button.active {
+  opacity: 1;
+  border-color: #42e8ff88;
+}
+
+.voice-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.talk-mode .talk-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6d6584;
+}
+
+.talk-mode.active {
+  border-color: #ff6b9c;
+  box-shadow: 0 0 18px #ff4e8a44;
+}
+
+.talk-mode.active .talk-dot {
+  background: #ff4e8a;
+  box-shadow: 0 0 10px #ff4e8a;
+  animation: blink 1s infinite;
+}
+
+/* ===== لوحة السوق ===== */
+.market-panel {
+  width: 100%;
+  margin: 4px 0 10px;
+  padding: 14px;
+  border: 1px solid #8c6abb44;
+  border-radius: 18px;
+  background: #110e22dd;
+  box-shadow: 0 0 30px #42e8ff10;
+}
+
+.market-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.market-symbols,
+.market-intervals {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.market-symbols button,
+.market-intervals button {
+  padding: 6px 11px;
+  border: 1px solid #8f70b944;
+  border-radius: 10px;
+  background: #1d1733;
+  color: #cfc4e8;
+  font-size: 12px;
+}
+
+.market-symbols button.active,
+.market-intervals button.active {
+  background: linear-gradient(135deg, #6c3bd1, #2a9cc9);
+  color: white;
+  border-color: transparent;
+}
+
+.market-price {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin: 14px 2px 8px;
+}
+
+.market-price span#market-name {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+.market-price strong {
+  font-size: 24px;
+  direction: ltr;
+  display: inline-block;
+}
+
+.market-change {
+  padding: 5px 10px;
+  border-radius: 9px;
+  font-size: 13px;
+  direction: ltr;
+}
+
+.market-change.up { background: #1d4d3a; color: #4de6a2; }
+.market-change.down { background: #4d1d2c; color: #ff6b8a; }
+
+#market-canvas {
+  width: 100%;
+  height: 220px;
+  display: block;
+  direction: ltr;
+}
+
+.market-note {
+  margin-top: 8px;
+  text-align: center;
+  color: #716b83;
+  font-size: 10px;
+}
+
+@keyframes blink {
+  50% { opacity: .3; }
+}
+
+@media (max-width: 600px) {
+  #market-btn span { display: none; }
+  .connection-status { font-size: 11px; }
+  #market-canvas { height: 180px; }
+  .market-price strong { font-size: 20px; }
+}
