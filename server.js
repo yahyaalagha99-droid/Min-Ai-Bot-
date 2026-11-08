@@ -1,3 +1,4 @@
+
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -15,134 +16,61 @@ const API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "openai/gpt-oss-20b";
 
-// ================== إعدادات الوقت والطقس ==================
-const DEFAULT_CITY = "بغداد";
-const DEFAULT_TZ = "Asia/Baghdad";
-const TZ_LABEL = "بغداد";
-const USE_CLIENT_IP = true;
-const ENABLE_QUICK_COMMANDS = true;
 const CACHE_TTL = 600 * 1000;
-const HTTP_TIMEOUT = 6000;
-// ==========================================================
+const HTTP_TIMEOUT = 8000;
 
 app.use(express.static(__dirname));
 app.use(express.static(path.join(__dirname, "Frontend")));
 
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "Frontend", "index.html"), (err) => {
-    if (err) res.sendFile(path.join(__dirname, "index.html"));
-  });
+  res.sendFile(path.join(__dirname, "Frontend", "index.html"));
 });
 
-// ======== وحدة المعلومات الحيّة: وقت + طقس ========
-
 const AR_DAYS = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
-const KU_DAYS = ["یەکشەممە", "دووشەممە", "سێشەممە", "چوارشەممە", "پێنجشەممە", "هەینی", "شەممە"];
 const EN_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const EN_DAY_IDX = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-const AR_MONTHS = [null, "كانون الثاني", "شباط", "آذار", "نيسان", "أيار", "حزيران",
-  "تموز", "آب", "أيلول", "تشرين الأول", "تشرين الثاني", "كانون الأول"];
-const KU_MONTHS = [null, "کانونی دووەم", "شوبات", "ئازار", "نیسان", "ئایار", "حوزەیران",
-  "تەمموز", "ئاب", "ئەیلوول", "تشرینی یەکەم", "تشرینی دووەم", "کانونی یەکەم"];
-const EN_MONTHS = [null, "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December"];
-
-const WMO = {
-  0: ["صحو", "ساف", "Clear sky"],
-  1: ["صحو غالباً", "زۆربەی ساف", "Mainly clear"],
-  2: ["غائم جزئياً", "هەوری بەشەکی", "Partly cloudy"],
-  3: ["غائم", "هەور", "Overcast"],
-  45: ["ضباب", "تەم", "Fog"],
-  48: ["ضباب متجمّد", "تەمی سەهۆڵ", "Rime fog"],
-  51: ["رشّ خفيف", "نمەبارانی کەم", "Light drizzle"],
-  53: ["رشّ", "نمەباران", "Drizzle"],
-  55: ["رشّ كثيف", "نمەبارانی زۆر", "Dense drizzle"],
-  56: ["رشّ متجمّد", "نمەبارانی سەهۆڵ", "Light freezing drizzle"],
-  57: ["رشّ متجمّد كثيف", "نمەبارانی سەهۆڵی زۆر", "Dense freezing drizzle"],
-  61: ["مطر خفيف", "بارانی سووک", "Slight rain"],
-  63: ["مطر", "باران", "Moderate rain"],
-  65: ["مطر غزير", "بارانی توند", "Heavy rain"],
-  66: ["مطر متجمّد", "بارانی سەهۆڵ", "Light freezing rain"],
-  67: ["مطر متجمّد غزير", "بارانی سەهۆڵی توند", "Heavy freezing rain"],
-  71: ["ثلج خفيف", "بەفری سووک", "Slight snow"],
-  73: ["ثلج", "بەفر", "Moderate snow"],
-  75: ["ثلج غزير", "بەفری زۆر", "Heavy snow"],
-  77: ["ثلج حبيبي", "دەنکە بەفر", "Snow grains"],
-  80: ["زخات مطر خفيفة", "نمەبارانی سووک", "Slight rain showers"],
-  81: ["زخات مطر", "نمەباران", "Moderate rain showers"],
-  82: ["زخات مطر غزيرة", "نمەبارانی توند", "Violent rain showers"],
-  85: ["زخات ثلج", "بەفرباران", "Slight snow showers"],
-  86: ["زخات ثلج غزيرة", "بەفربارانی زۆر", "Heavy snow showers"],
-  95: ["عاصفة رعدية", "ڕەشەبا", "Thunderstorm"],
-  96: ["عاصفة رعدية مع برد", "ڕەشەبا لەگەڵ تەرزە", "Thunderstorm with hail"],
-  99: ["عاصفة رعدية شديدة", "ڕەشەبای توند", "Severe thunderstorm"]
-};
-
-const WMO_IDX = { ar: 0, ku: 1, en: 2 };
-
-const L10N = {
-  ar: {
-    wIn: "الطقس في", now: "الحرارة الآن", feels: "محسوسة", hum: "الرطوبة",
-    wind: "الريح", today: "اليوم", from: "من", to: "إلى", unit: "كم/س",
-    dir: "بتوقيت", clock: "الساعة", morning: "صباحاً", evening: "مساءً",
-    noCity: (c) => `ما لكيت مدينة باسم «${c}»`,
-    err: (e) => `تعذّر جلب الطقس حالياً (${e})`
-  },
-  ku: {
-    wIn: "کەشوهەوا لە", now: "پلەی گەرمی ئێستا", feels: "هەست پێدەکرێت",
-    hum: "شێ", wind: "با", today: "ئەمڕۆ", from: "لە", to: "بۆ",
-    unit: "کم/ک", dir: "به کاتی", clock: "کاتژمێر", morning: "بەیانی",
-    evening: "ئێوارە",
-    noCity: (c) => `شارێک به ناوی «${c}» نەدۆزرایەوە`,
-    err: (e) => `نەتوانرا کەشوهەوا بهێنرێت (${e})`
-  },
-  en: {
-    wIn: "Weather in", now: "Temperature", feels: "feels like",
-    hum: "Humidity", wind: "Wind", today: "Today", from: "from",
-    to: "to", unit: "km/h", dir: "timezone", clock: "at",
-    morning: "AM", evening: "PM",
-    noCity: (c) => `City "${c}" not found`,
-    err: (e) => `Weather unavailable (${e})`
-  }
-};
-
-const CITY_NAMES = [
-  "بغداد", "أربيل", "البصرة", "الموصل", "النجف", "كربلاء", "السليمانية", "دهوك", "كركوك",
-  "الناصرية", "السماوة", "الديوانية", "الحلة", "الرمادي", "بعقوبة", "تكريت", "سامراء",
-  "الكوت", "العمارة", "الزبير", "الفلوجة", "هيت", "زاخو", "حلبجة", "جمجمال", "عقرة", "سنجار",
-  "مكة", "المدينة المنورة", "الرياض", "جدة", "الدمام", "أبها", "دبي", "أبوظبي", "الشارقة",
-  "العين", "الدوحة", "الكويت", "مسقط", "صلالة", "المنامة", "صنعاء", "عدن", "تعز", "الحديدة",
-  "دمشق", "حلب", "حمص", "اللاذقية", "بيروت", "طرابلس", "صيدا", "عمان", "الزرقاء", "إربد",
-  "القدس", "غزة", "رام الله", "نابلس", "الخليل", "القاهرة", "الإسكندرية", "الجيزة", "أسوان",
-  "المنصورة", "طنطا", "الخرطوم", "بورتسودان", "بنغازي", "مصراتة",
-  "طهران", "أصفهان", "مشهد", "تبريز", "شيراز", "إسطنبول", "أنقرة", "إزمير", "بورصة", "أنطاكية",
-  "باكو", "يريفان", "تبليسي",
-  "لندن", "مانشستر", "برمنغهام", "باريس", "مارسيليا", "ليون", "برلين", "ميونخ", "هامبورغ",
-  "فرانكفورت", "كولونيا", "أمستردام", "روتردام", "بروكسل", "روما", "ميلانو", "نابولي",
-  "مدريد", "برشلونة", "لشبونة", "ستوكهولم", "أوسلو", "كوبنهاغن", "هلسنكي", "فيينا",
-  "زيوريخ", "جنيف", "أثينا", "دبلن", "براغ", "بودابست", "وارسو", "بوخارست", "صوفيا",
-  "موسكو", "سانت بطرسبرغ", "كييف", "أوديسا", "مينسك", "بلغراد", "زغرب",
-  "نيويورك", "واشنطن", "بوسطن", "لوس أنجلوس", "سان فرانسيسكو", "شيكاغو", "هيوستن",
-  "دالاس", "ميامي", "أورلاندو", "سياتل", "لاس فيغاس", "فينيكس", "أتلانتا", "ديترويت",
-  "تورونتو", "فانكوفر", "مونتريال", "كالجاري", "مكسيكو سيتي",
-  "طوكيو", "أوساكا", "سيول", "بكين", "شنغهاي", "هونغ كونغ", "تايبيه", "سنغافورة",
-  "بانكوك", "جاكرتا", "كوالالمبور", "مانيلا", "دلهي", "مومباي", "بنغالور", "كراتشي",
-  "لاهور", "إسلام آباد", "كابول", "طشقند", "ألماتي", "سيدني", "ملبورن", "بيرث", "أوكلاند"
+const AR_MONTHS = [
+  null, "كانون الثاني", "شباط", "آذار", "نيسان", "أيار", "حزيران",
+  "تموز", "آب", "أيلول", "تشرين الأول", "تشرين الثاني", "كانون الأول"
 ];
 
+const EN_MONTHS = [
+  null, "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+
+const WMO = {
+  0: ["صحو", "Clear sky"],
+  1: ["صحو غالباً", "Mainly clear"],
+  2: ["غائم جزئياً", "Partly cloudy"],
+  3: ["غائم", "Overcast"],
+  45: ["ضباب", "Fog"],
+  48: ["ضباب متجمّد", "Rime fog"],
+  51: ["رذاذ خفيف", "Light drizzle"],
+  53: ["رذاذ", "Drizzle"],
+  55: ["رذاذ كثيف", "Dense drizzle"],
+  61: ["مطر خفيف", "Slight rain"],
+  63: ["مطر متوسط", "Moderate rain"],
+  65: ["مطر غزير", "Heavy rain"],
+  71: ["ثلج خفيف", "Slight snow"],
+  73: ["ثلج", "Moderate snow"],
+  75: ["ثلج غزير", "Heavy snow"],
+  80: ["زخات مطر", "Rain showers"],
+  81: ["زخات مطر متوسطة", "Moderate rain showers"],
+  82: ["زخات مطر غزيرة", "Heavy rain showers"],
+  85: ["زخات ثلج", "Snow showers"],
+  86: ["زخات ثلج غزيرة", "Heavy snow showers"],
+  95: ["عاصفة رعدية", "Thunderstorm"],
+  96: ["عاصفة رعدية مع برد", "Thunderstorm with hail"],
+  99: ["عاصفة رعدية شديدة", "Severe thunderstorm"]
+};
+
 const cityCache = new Map();
-const ipCache = new Map();
 
 function norm(s) {
   return String(s || "")
     .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
     .replace(/[أإآٱ]/g, "ا")
-    .replace(/\u0643/g, "\u06A9")
-    .replace(/[\u064A\u0649\u0626]/g, "\u06CC")
-    .replace(/\u0624/g, "و")
-    .replace(/[\u0629\u06D5]/g, "ه")
-    .replace(/\u06BE/g, "ه")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
@@ -155,23 +83,43 @@ function detectLang(text) {
   return "ar";
 }
 
-function cachedGet(store, key) {
-  const hit = store.get(key);
-  if (hit && Date.now() - hit.t < CACHE_TTL) return hit.v;
-  return null;
+function validTimezone(value) {
+  if (typeof value !== "string" || value.length > 80) return "UTC";
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value });
+    return value;
+  } catch {
+    return "UTC";
+  }
+}
+
+function validLocation(value) {
+  if (!value || typeof value !== "object") return null;
+
+  const lat = Number(value.latitude);
+  const lon = Number(value.longitude);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+
+  return { latitude: lat, longitude: lon };
 }
 
 function fetchJson(url) {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), HTTP_TIMEOUT);
-  return fetch(url, { signal: ctl.signal })
-    .then((r) => r.json())
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT);
+
+  return fetch(url, { signal: controller.signal })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
     .finally(() => clearTimeout(timer));
 }
 
-function nowParts(tz = DEFAULT_TZ) {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
+function nowParts(timezone = "UTC") {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
     hour12: false,
     weekday: "short",
     year: "numeric",
@@ -180,22 +128,19 @@ function nowParts(tz = DEFAULT_TZ) {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit"
-  });
+  }).formatToParts(new Date());
 
   const p = {};
-  for (const part of dtf.formatToParts(new Date())) p[part.type] = part.value;
-
-  let hour = parseInt(p.hour, 10);
-  if (hour === 24) hour = 0;
+  for (const item of parts) p[item.type] = item.value;
 
   return {
-    year: +p.year,
-    month: +p.month,
-    day: +p.day,
-    hour,
-    minute: +p.minute,
-    second: +p.second,
-    weekday: EN_DAY_IDX[p.weekday] ?? new Date().getDay()
+    year: Number(p.year),
+    month: Number(p.month),
+    day: Number(p.day),
+    hour: Number(p.hour) === 24 ? 0 : Number(p.hour),
+    minute: Number(p.minute),
+    second: Number(p.second),
+    weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday)
   };
 }
 
@@ -203,251 +148,196 @@ function pad(n) {
   return String(n).padStart(2, "0");
 }
 
-function getNowText() {
-  const n = nowParts();
-  const h12 = n.hour % 12 || 12;
+function getNowText(timezone) {
+  const n = nowParts(timezone);
   const period = n.hour < 12 ? "صباحاً" : "مساءً";
+  const hour = n.hour % 12 || 12;
 
-  return `${AR_DAYS[n.weekday]} ${n.day} ${AR_MONTHS[n.month]} ${n.year} — ` +
-    `الساعة ${h12}:${pad(n.minute)}:${pad(n.second)} ${period} (توقيت ${TZ_LABEL})`;
+  return `${AR_DAYS[n.weekday]} ${n.day} ${AR_MONTHS[n.month]} ${n.year}، الساعة ${hour}:${pad(n.minute)} ${period} (${timezone})`;
 }
 
-function getNowIso() {
-  const n = nowParts();
-  const utc = Date.now();
-  const local = new Date(
-    `${n.year}-${pad(n.month)}-${pad(n.day)}T${pad(n.hour)}:${pad(n.minute)}:${pad(n.second)}Z`
-  ).getTime();
-
-  const diffMin = Math.round((local - utc) / 60000);
-  const sign = diffMin >= 0 ? "+" : "-";
-  const abs = Math.abs(diffMin);
-
-  return `${n.year}-${pad(n.month)}-${pad(n.day)}T${pad(n.hour)}:${pad(n.minute)}:${pad(n.second)}` +
-    `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
-}
-
-function getNowShort(lang = "ar") {
-  const n = nowParts();
-  const h12 = n.hour % 12 || 12;
-  const time = `${h12}:${pad(n.minute)}`;
+function getNowShort(lang, timezone) {
+  const n = nowParts(timezone);
+  const hour = n.hour % 12 || 12;
+  const time = `${hour}:${pad(n.minute)}`;
 
   if (lang === "en") {
-    return `${EN_DAYS[n.weekday]}, ${n.day} ${EN_MONTHS[n.month]} ${n.year} — ${time} ${n.hour < 12 ? "AM" : "PM"} (${TZ_LABEL})`;
+    return `${EN_DAYS[n.weekday]}, ${EN_MONTHS[n.month]} ${n.day}, ${n.year} — ${time} ${n.hour < 12 ? "AM" : "PM"} (${timezone})`;
   }
 
-  if (lang === "ku") {
-    return `${KU_DAYS[n.weekday]} ${n.day} ${KU_MONTHS[n.month]} ${n.year} — کاتژمێر ${time} ${n.hour < 12 ? "بەیانی" : "ئێوارە"} (${TZ_LABEL})`;
-  }
-
-  return `${AR_DAYS[n.weekday]} ${n.day} ${AR_MONTHS[n.month]} ${n.year} — الساعة ${time} ${n.hour < 12 ? "صباحاً" : "مساءً"} (${TZ_LABEL})`;
+  return `${AR_DAYS[n.weekday]} ${n.day} ${AR_MONTHS[n.month]} ${n.year} — الساعة ${time} ${n.hour < 12 ? "صباحاً" : "مساءً"} (${timezone})`;
 }
 
-async function getWeather(city = DEFAULT_CITY, lang = "ar") {
-  const L = L10N[lang] || L10N.ar;
-  const key = norm(city) + "|" + lang;
-  const hit = cachedGet(cityCache, key);
-  if (hit) return hit;
+function extractCity(text) {
+  const t = String(text || "");
 
-  let loc;
+  const patterns = [
+    /(?:في|بمدينة|بمنطقة|بمدينه|in)\s+([A-Za-z\u0600-\u06FF\s-]{2,40})/i,
+    /(?:طقس|الطقس|حرارة|الحرارة|temperature|weather)\s+([A-Za-z\u0600-\u06FF\s-]{2,40})/i
+  ];
 
-  try {
-    const g = await fetchJson(
-      "https://geocoding-api.open-meteo.com/v1/search?count=1&language=ar&name=" +
-      encodeURIComponent(city)
-    );
-    loc = g && g.results && g.results[0];
-  } catch (e) {
-    return L.err(e.message);
+  for (const pattern of patterns) {
+    const match = t.match(pattern);
+    if (match) {
+      return match[1]
+        .replace(/[؟?!.,،؛]/g, "")
+        .trim()
+        .split(/\s+(?:اليوم|الآن|باجر|غداً|today|now)\b/i)[0]
+        .trim();
+    }
   }
 
-  if (!loc) return L.noCity(city);
+  return null;
+}
+
+async function getWeather(city, location, timezone, lang) {
+  const isEnglish = lang === "en";
+  const label = city || (isEnglish ? "your current location" : "موقعك الحالي");
+
+  const cacheKey = location
+    ? `${location.latitude},${location.longitude}|${lang}`
+    : `${norm(city)}|${lang}`;
+
+  const cached = cityCache.get(cacheKey);
+  if (cached && Date.now() - cached.time < CACHE_TTL) return cached.value;
 
   try {
-    const d = await fetchJson(
-      `https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}` +
-      `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code` +
-      `&daily=temperature_2m_max,temperature_2m_min&timezone=${encodeURIComponent(DEFAULT_TZ)}&forecast_days=1`
-    );
+    let latitude;
+    let longitude;
 
-    const c = d.current || {};
-    const day = d.daily || {};
-    const desc = (WMO[c.weather_code] || ["غير معروف", "نەزانراو", "Unknown"])[WMO_IDX[lang] ?? 0];
+    if (location && !city) {
+      latitude = location.latitude;
+      longitude = location.longitude;
+    } else {
+      if (!city) {
+        return isEnglish
+          ? "Please allow location access or tell me your city."
+          : "اسمح للبوت باستخدام موقع جهازك، أو اكتب اسم مدينتك حتى أعطيك الطقس الصحيح.";
+      }
 
-    let txt = `${L.wIn} ${loc.name}: ${desc}\n` +
-      `• ${L.now}: ${c.temperature_2m}° (${L.feels} ${c.apparent_temperature}°)\n` +
-      `• ${L.hum}: ${c.relative_humidity_2m}%\n` +
-      `• ${L.wind}: ${c.wind_speed_10m} ${L.unit}`;
+      const geo = await fetchJson(
+        `https://geocoding-api.open-meteo.com/v1/search?count=1&language=${isEnglish ? "en" : "ar"}&name=${encodeURIComponent(city)}`
+      );
 
-    if (day.temperature_2m_max && day.temperature_2m_min) {
-      txt += `\n• ${L.today}: ${L.from} ${day.temperature_2m_min[0]}° ${L.to} ${day.temperature_2m_max[0]}°`;
+      const result = geo.results?.[0];
+
+      if (!result) {
+        return isEnglish
+          ? `I couldn't find the city ${city}.`
+          : `ما لكيت مدينة باسم ${city}.`;
+      }
+
+      latitude = result.latitude;
+      longitude = result.longitude;
     }
 
-    cityCache.set(key, { v: txt, t: Date.now() });
-    return txt;
-  } catch (e) {
-    return L.err(e.message);
+    const weather = await fetchJson(
+      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+      "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code" +
+      "&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1"
+    );
+
+    const current = weather.current || {};
+    const daily = weather.daily || {};
+    const description = WMO[current.weather_code]?.[isEnglish ? 1 : 0] || "غير معروف";
+    const place = city || label;
+
+    const result = isEnglish
+      ? `Weather in ${place}: ${description}\nTemperature: ${current.temperature_2m}°C (feels like ${current.apparent_temperature}°C)\nHumidity: ${current.relative_humidity_2m}%\nWind: ${current.wind_speed_10m} km/h\nToday's range: ${daily.temperature_2m_min?.[0]}° to ${daily.temperature_2m_max?.[0]}°C`
+      : `🌤️ الطقس في ${place}: ${description}\n• الحرارة الآن: ${current.temperature_2m}° مئوية\n• المحسوسة: ${current.apparent_temperature}°\n• الرطوبة: ${current.relative_humidity_2m}%\n• سرعة الرياح: ${current.wind_speed_10m} كم/س\n• حرارة اليوم: من ${daily.temperature_2m_min?.[0]}° إلى ${daily.temperature_2m_max?.[0]}°`;
+
+    cityCache.set(cacheKey, { value: result, time: Date.now() });
+    return result;
+  } catch (error) {
+    return isEnglish
+      ? "I couldn't retrieve the weather right now. Please try again."
+      : "تعذّر جلب الطقس حالياً. حاول مرة ثانية.";
   }
 }
 
 const WEATHER_WORDS = [
-  "طقس", "الطقس", "جو", "الجو", "حراره", "الحراره", "درجه الحراره",
-  "مطر", "امطار", "برد", "رطوبه", "ثلج", "رياح", "weather", "temperature",
-  "کهشوههوا", "کەشوهەوا", "گەرمی", "باران", "بەفر", "تەمپەراتور"
+  "طقس", "الطقس", "جو", "الجو", "حراره", "الحراره",
+  "درجه", "مطر", "امطار", "برد", "رطوبه", "ثلج",
+  "رياح", "weather", "temperature", "forecast",
+  "کەشوهەوا", "گەرمی", "باران", "بەفر"
 ];
 
-const TIME_WORDS = ["وقت", "الوقت", "ساعه", "الساعه", "کاتژمێر", "time", "clock"];
-const DATE_WORDS = ["تاريخ", "التاريخ", "يوم", "اليوم", "بهروار", "بەروار", "ڕۆژ", "date", "today"];
+const TIME_WORDS = [
+  "وقت", "الوقت", "ساعه", "الساعه", "time", "clock",
+  "کاتژمێر"
+];
 
-const PHRASES = {
-  time: ["كم الساعه", "كم الوقت", "كم الساعه الان", "what time", "چەند کاتژمێر"],
-  date: ["كم التاريخ", "شنو اليوم", "ما هو اليوم", "اليوم كم", "what date", "چەند ڕۆژە"],
-  weather: ["درجه الحراره", "حاله الطقس", "شلون الجو", "شلون الطقس"]
-};
+const DATE_WORDS = [
+  "تاريخ", "التاريخ", "يوم", "اليوم", "date", "today",
+  "بەروار", "ڕۆژ"
+];
 
-function matchWords(n, keys) {
-  const words = new Set(n.split(" "));
-  return keys.some((k) => words.has(norm(k)));
-}
-
-function matchPhrases(n, list) {
-  return list.some((p) => n.includes(norm(p)));
+function containsWord(text, words) {
+  const n = norm(text);
+  return words.some(word => n.includes(norm(word)));
 }
 
 function hasWeatherWord(text) {
+  return containsWord(text, WEATHER_WORDS);
+}
+
+function isIdentityQuestion(text) {
   const n = norm(text);
-  return matchWords(n, WEATHER_WORDS) || matchPhrases(n, PHRASES.weather);
-}
 
-function extractCity(text) {
-  const n = " " + norm(text) + " ";
-  let best = null;
-
-  for (const c of CITY_NAMES) {
-    const nc = norm(c);
-    if (nc && n.includes(nc) && (!best || nc.length > norm(best).length)) {
-      best = c;
-    }
-  }
-
-  if (best) return best;
-
-  if (hasWeatherWord(text)) {
-    const m = n.match(/(?:فی|في|له|لە|in)\s+([A-Za-z\u0600-\u06FF-]{3,20})/);
-    if (m) return m[1];
-  }
-
-  return null;
-}
-
-async function cityFromIp(ip) {
-  if (!USE_CLIENT_IP || !ip) return null;
-
-  ip = String(ip).split(",")[0].trim();
-
-  if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|0\.)/.test(ip) || ip.length > 45) {
-    return null;
-  }
-
-  const hit = cachedGet(ipCache, ip);
-  if (hit) return hit;
-
-  try {
-    const r = await fetchJson(`https://ipwho.is/${ip}`);
-
-    if (r && r.success && r.city) {
-      ipCache.set(ip, { v: r.city, t: Date.now() });
-      return r.city;
-    }
-  } catch (e) {
-    // نرجع للمدينة الافتراضية إذا فشل تحديد الموقع
-  }
-
-  return null;
+  return [
+    "منو صانعك",
+    "من صنعك",
+    "من صنعك؟",
+    "منو مطورك",
+    "من طورك",
+    "من عملك",
+    "من انشاك",
+    "who made you",
+    "who created you",
+    "who developed you",
+    "who is your developer"
+  ].some(q => n.includes(norm(q)));
 }
 
 function isQuickCommand(text) {
   const t = String(text || "").trim();
   if (!t) return false;
-  if (t.startsWith("/") || t.startsWith("\\")) return true;
-
-  const words = t.split(/\s+/).filter(Boolean);
-  if (words.length > 4) return false;
+  if (isIdentityQuestion(t)) return true;
 
   const n = norm(t);
-
-  return matchWords(n, TIME_WORDS) ||
-    matchWords(n, DATE_WORDS) ||
-    matchWords(n, WEATHER_WORDS) ||
-    matchPhrases(n, PHRASES.time) ||
-    matchPhrases(n, PHRASES.date) ||
-    matchPhrases(n, PHRASES.weather);
+  return containsWord(n, WEATHER_WORDS) ||
+    containsWord(n, TIME_WORDS) ||
+    containsWord(n, DATE_WORDS);
 }
 
-async function handleQuickCommand(text, ip = null) {
-  if (!text) return null;
-
+async function handleQuickCommand(text, location, timezone) {
   const lang = detectLang(text);
-  const clean = String(text).replace(/[/\\]/g, " ");
-  const n = norm(clean);
 
-  if (hasWeatherWord(clean)) {
-    const city = extractCity(clean) || (await cityFromIp(ip)) || DEFAULT_CITY;
-    return "🌤️ " + (await getWeather(city, lang));
+  if (isIdentityQuestion(text)) {
+    return DEVELOPER_NAME;
   }
 
-  if (matchWords(n, TIME_WORDS) || matchPhrases(n, PHRASES.time)) {
-    return `🕐 ${getNowShort(lang)}`;
+  if (hasWeatherWord(text)) {
+    const city = extractCity(text);
+
+    if (city) {
+      return getWeather(city, null, timezone, lang);
+    }
+
+    if (location) {
+      return getWeather(null, location, timezone, lang);
+    }
+
+    return lang === "en"
+      ? "Please allow location access or tell me your city so I can give you the correct weather."
+      : "حتى أعطيك حرارة منطقتك الصحيحة، اسمح للبوت بتحديد موقعك أو اكتب اسم مدينتك.";
   }
 
-  if (matchWords(n, DATE_WORDS) || matchPhrases(n, PHRASES.date)) {
-    return `📅 ${getNowShort(lang)}`;
+  if (containsWord(text, TIME_WORDS) || containsWord(text, DATE_WORDS)) {
+    return getNowShort(lang, timezone);
   }
 
   return null;
-}
-
-async function buildSystemPrompt(userText = "", ip = null) {
-  const live = [
-    "",
-    "LIVE REAL-TIME DATA (authoritative — never guess or invent any number, date or time):",
-    `- Current date & time: ${getNowText()}`,
-    `- Exact timestamp: ${getNowIso()}`,
-    "- Use the data above for ANY question about today's date, the day name, the time or how many hours/days remain."
-  ];
-
-  if (hasWeatherWord(userText)) {
-    const city = extractCity(userText) || (await cityFromIp(ip)) || DEFAULT_CITY;
-    const w = await getWeather(city, detectLang(userText));
-    live.push("- Current weather: " + w.replace(/\n/g, " | "));
-  }
-
-  live.push(
-    "- If asked about live data you were not given (news, prices, events), say clearly that you do not have it right now instead of making it up. Never claim to have a clock or internet."
-  );
-
-  return `You are ${APP_NAME}, an advanced AI assistant created by ${DEVELOPER_NAME}.
-
-LANGUAGE RULES:
-- Understand and support as many languages as possible.
-- Always answer in the same language used by the user.
-- If the user asks who created you, who developed you, or who made you, answer in the user's language.
-- The developer's name MUST always appear exactly as: Yahya.Kurdish
-- Never translate, change, or remove the dot from the developer's name.
-- Never mention the developer unless the user asks.
-- Keep the developer identity consistent in every language.
-
-` + live.join("\n");
-}
-
-function getClientIp(req) {
-  const xf = req.headers["x-forwarded-for"];
-
-  if (typeof xf === "string" && xf.length) {
-    return xf.split(",")[0].trim();
-  }
-
-  return (req.socket && req.socket.remoteAddress) || "";
 }
 
 function extractLastUserMessage(messages = []) {
@@ -460,8 +350,8 @@ function extractLastUserMessage(messages = []) {
       if (typeof content === "string") return content;
 
       if (Array.isArray(content)) {
-        const textItem = content.find((item) => item.type === "text");
-        return textItem ? textItem.text : "";
+        const item = content.find(x => x.type === "text");
+        return item?.text || "";
       }
     }
   }
@@ -469,10 +359,31 @@ function extractLastUserMessage(messages = []) {
   return "";
 }
 
+function cleanMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+
+  return messages
+    .filter(m =>
+      m &&
+      ["user", "assistant"].includes(m.role) &&
+      (typeof m.content === "string" || Array.isArray(m.content))
+    )
+    .slice(-30);
+}
+
+function sendSSE(res, value) {
+  res.write(`data: ${JSON.stringify(value)}\n\n`);
+}
+
 app.post("/ask/stream", async (req, res) => {
   if (!API_KEY) {
     return res.status(500).json({ error: "GROQ_API_KEY not set in Render" });
   }
+
+  const messages = cleanMessages(req.body?.messages);
+  const lastUserText = extractLastUserMessage(messages);
+  const location = validLocation(req.body?.location);
+  const timezone = validTimezone(req.body?.timezone || "UTC");
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
@@ -482,35 +393,66 @@ app.post("/ask/stream", async (req, res) => {
 
   res.write(": connected\n\n");
 
-  const messages = req.body?.messages || [];
-  const lastUserText = extractLastUserMessage(messages);
-  const clientIp = getClientIp(req);
+  if (isIdentityQuestion(lastUserText)) {
+    sendSSE(res, { token: DEVELOPER_NAME });
+    sendSSE(res, "[DONE]");
+    return res.end();
+  }
 
-  // ===== الأوامر السريعة: /وقت /تاريخ /طقس =====
-  if (ENABLE_QUICK_COMMANDS && isQuickCommand(lastUserText)) {
-    try {
-      const quick = await handleQuickCommand(lastUserText, clientIp);
+  if (isQuickCommand(lastUserText)) {
+    const quick = await handleQuickCommand(lastUserText, location, timezone);
 
-      if (quick) {
-        res.write(`data: ${JSON.stringify({ token: quick })}\n\n`);
-        res.write("data: [DONE]\n\n");
-        return res.end();
-      }
-    } catch (e) {
-      // نكمل للموديل إذا حدث خطأ
+    if (quick) {
+      sendSSE(res, { token: quick });
+      sendSSE(res, "[DONE]");
+      return res.end();
     }
   }
 
+  const live = [
+    `Current date and time: ${getNowText(timezone)}`,
+    `User timezone: ${timezone}`,
+    "Use the supplied local date and time when asked about time or date.",
+    "Never invent live information.",
+    "Always answer in the same language as the user's latest message.",
+    `If asked who created or developed you, answer with exactly: ${DEVELOPER_NAME}`,
+    "Do not mention the developer unless asked."
+  ];
+
+  if (hasWeatherWord(lastUserText)) {
+    const city = extractCity(lastUserText);
+
+    if (city) {
+      live.push("Current weather: " + await getWeather(city, null, timezone, detectLang(lastUserText)));
+    } else if (location) {
+      live.push("Current weather: " + await getWeather(null, location, timezone, detectLang(lastUserText)));
+    } else {
+      live.push("The user's location is not available. Ask them for permission to access location or ask which city they mean. Never assume Baghdad.");
+    }
+  }
+
+  const systemPrompt = `You are ${APP_NAME}, a helpful and intelligent AI assistant.
+
+Developer: ${DEVELOPER_NAME}
+
+Rules:
+- Speak naturally, warmly, and clearly.
+- Understand the conversation context.
+- Answer in the same language used by the user.
+- Never invent facts, weather, dates, or times.
+- When the user asks who made you, answer exactly ${DEVELOPER_NAME}.
+- Never change the developer name.
+
+LIVE INFORMATION:
+${live.join("\n")}`;
+
   const formattedMessages = [
-    {
-      role: "system",
-      content: await buildSystemPrompt(lastUserText, clientIp)
-    },
+    { role: "system", content: systemPrompt },
     ...messages
   ];
 
   try {
-    const response = await globalThis.fetch(GROQ_API_URL, {
+    const response = await fetch(GROQ_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -526,15 +468,9 @@ app.post("/ask/stream", async (req, res) => {
     });
 
     if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-
-      res.write(
-        `data: ${JSON.stringify({
-          error: `API Error ${response.status}:${errText.slice(0, 200)}`
-        })}\n\n`
-      );
-
-      res.write("data: [DONE]\n\n");
+      const errorText = await response.text().catch(() => "");
+      sendSSE(res, { error: `API Error ${response.status}: ${errorText.slice(0, 200)}` });
+      sendSSE(res, "[DONE]");
       return res.end();
     }
 
@@ -549,41 +485,32 @@ app.post("/ask/stream", async (req, res) => {
       buffer += decoder.decode(value, { stream: true });
 
       const lines = buffer.split("\n");
-      buffer = lines.pop();
+      buffer = lines.pop() || "";
 
       for (const line of lines) {
         const trimmed = line.trim();
 
-        if (!trimmed || trimmed.startsWith(":")) continue;
+        if (!trimmed.startsWith("data:")) continue;
 
-        if (trimmed.startsWith("data:")) {
-          const payload = trimmed.slice(5).trim();
+        const payload = trimmed.slice(5).trim();
+        if (payload === "[DONE]") continue;
 
-          if (payload === "[DONE]") continue;
+        try {
+          const parsed = JSON.parse(payload);
+          const token = parsed?.choices?.[0]?.delta?.content || "";
 
-          try {
-            const parsed = JSON.parse(payload);
-            const token = parsed?.choices?.[0]?.delta?.content || "";
-
-            if (token) {
-              res.write(`data: ${JSON.stringify({ token })}\n\n`);
-            }
-          } catch (e) {
-            // تجاهل أجزاء البيانات غير المكتملة
-          }
+          if (token) sendSSE(res, { token });
+        } catch {
+          // تجاهل أجزاء البيانات غير المكتملة
         }
       }
     }
 
-    res.write("data: [DONE]\n\n");
+    sendSSE(res, "[DONE]");
     res.end();
-
-  } catch (err) {
-    res.write(
-      `data: ${JSON.stringify({ error: err.message })}\n\n`
-    );
-
-    res.write("data: [DONE]\n\n");
+  } catch (error) {
+    sendSSE(res, { error: error.message });
+    sendSSE(res, "[DONE]");
     res.end();
   }
 });
@@ -591,5 +518,5 @@ app.post("/ask/stream", async (req, res) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`${APP_NAME} running on port ${PORT} 🚀`);
+  console.log(`${APP_NAME} running on port ${PORT}`);
 });
